@@ -41,7 +41,6 @@ The goal is simple: make it easy to review, filter, summarize, move, restore, an
 ytb-playlists/
   extension/        Chrome/Chromium extension UI and YouTube integration
   server/           Express API, SQLite schema, transcript and summary services
-  imports/          Local import files, ignored by git
   database.sqlite   Local runtime database, ignored by git
 ```
 
@@ -129,7 +128,7 @@ Local data and secrets must not be committed. `.gitignore` covers:
 - SQLite databases: `database.sqlite`, `*.sqlite`, `*.db`;
 - runtime logs;
 - `node_modules`, build output, and TypeScript cache;
-- `imports/`, `exports/`, `uploads/`;
+- `exports/`, `uploads/`;
 - private keys, certificates, and packaged extension artifacts.
 
 Before committing, it is useful to run:
