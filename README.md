@@ -141,6 +141,12 @@ git ls-files --cached --ignored --exclude-standard
 
 The second command should return an empty result.
 
+## Contributing
+
+Ideas, bug reports, and pull requests are welcome!
+
+If you have a feature idea or found something that could be improved - open an issue or submit a PR. The project is intentionally simple and focused, so contributions that keep it lean and useful are most appreciated.
+
 ## License
 
 This project is distributed under the ISC License. See `LICENSE` for details.
