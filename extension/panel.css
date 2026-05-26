@@ -1,0 +1,129 @@
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: #0f0f0f;
+  overflow: hidden;
+}
+
+body {
+  font-family: "Roboto", "Arial", sans-serif;
+}
+
+#yt-playlist-alt-panel {
+  position: static;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: 100vh;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  display: flex;
+}
+
+#yt-playlist-alt-header {
+  min-height: 48px;
+}
+
+.yt-playlist-alt-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.yt-panel-header-button {
+  height: 30px;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  background: #2a2a2a;
+  color: #f1f1f1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.yt-panel-header-button:hover {
+  background: #333;
+  border-color: #555;
+}
+
+.yt-panel-header-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#yt-playlist-alt-controls {
+  padding: 10px 12px;
+}
+
+.yt-playlist-alt-row {
+  gap: 6px;
+}
+
+.yt-playlist-alt-row button {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.yt-date-filter-row {
+  flex-wrap: wrap;
+}
+
+.yt-date-filter-row select,
+.yt-date-filter-row input {
+  flex: 1 1 120px;
+}
+
+#yt-playlist-alt-videos {
+  padding: 8px 0;
+}
+
+.yt-playlist-alt-video {
+  padding: 8px 10px;
+}
+
+.yt-playlist-alt-transcript-btn,
+.yt-playlist-alt-summary-btn,
+.yt-playlist-alt-tags-btn {
+  margin-top: 18px;
+}
+
+.yt-playlist-alt-video-info {
+  min-width: 0;
+}
+
+.yt-playlist-alt-video-title {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.yt-playlist-alt-group {
+  margin: 0 8px 8px;
+}
+
+.yt-playlist-alt-group-header {
+  padding: 8px 10px;
+}
+
+@media (max-width: 360px) {
+  .yt-playlist-alt-row:first-child {
+    flex-wrap: wrap;
+  }
+
+  .yt-playlist-alt-row:first-child select {
+    flex-basis: 100%;
+  }
+}

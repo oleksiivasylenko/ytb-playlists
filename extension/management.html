@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Playlist Manager</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #111318;
+      --surface: #1b1f28;
+      --surface2: #252b36;
+      --border: #343b49;
+      --accent: #4f7cff;
+      --accent-hover: #426ae0;
+      --danger: #d95757;
+      --success: #55ad7a;
+      --text: #edf1f7;
+      --text-muted: #9aa3b2;
+      --radius: 8px;
+      --radius-sm: 5px;
+    }
+
+    body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      scrollbar-color: #566176 #10141d;
+    }
+
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #566176 #10141d;
+    }
+
+    *::-webkit-scrollbar {
+      width: 12px;
+      height: 12px;
+    }
+
+    *::-webkit-scrollbar-track {
+      background: #10141d;
+    }
+
+    *::-webkit-scrollbar-thumb {
+      background: #566176;
+      border: 3px solid #10141d;
+      border-radius: 999px;
+    }
+
+    *::-webkit-scrollbar-thumb:hover {
+      background: #6b7890;
+    }
+
+    *::-webkit-scrollbar-corner {
+      background: #10141d;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: var(--accent);
+      color: #fff;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    button:hover { background: var(--accent-hover); }
+    button:disabled { cursor: wait; opacity: 0.65; }
+
+    button.ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    button.ghost:hover {
+      background: var(--surface2);
+      color: var(--text);
+    }
+
+    button.danger { background: var(--danger); }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: #121620;
+      color: var(--text);
+      padding: 9px 10px;
+      outline: none;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 160px;
+    }
+
+    textarea.compact-textarea {
+      min-height: 82px;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .sidebar-header {
+      padding: 18px 16px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-header h1 {
+      font-size: 16px;
+      margin-bottom: 12px;
+    }
+
+    .create-form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+
+    .playlist-list {
+      list-style: none;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .playlist-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      cursor: pointer;
+      overflow: hidden;
+    }
+
+    .playlist-list-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .playlist-source-icon {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .playlist-source-icon svg {
+      width: 17px;
+      height: 17px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .playlist-source-icon.linked {
+      color: #55d98d;
+    }
+
+    .playlist-source-icon.missing {
+      color: #e06c75;
+      opacity: 0.9;
+    }
+
+    .playlist-list li:hover {
+      background: var(--surface2);
+      color: var(--text);
+    }
+
+    .playlist-list li.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .playlist-list li.active .playlist-source-icon.linked {
+      color: #d8ffe6;
+    }
+
+    .playlist-list li.active .playlist-source-icon.missing {
+      color: #ffd2d6;
+    }
+
+    .main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .empty-state {
+      flex: 1;
+      display: grid;
+      place-items: center;
+      color: var(--text-muted);
+    }
+
+    #playlist-view {
+      display: none;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .main-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .playlist-title-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .playlist-title-row h2 {
+      font-size: 18px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .header-actions,
+    .form-actions,
+    .summary-settings-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    #rename-playlist-form {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+
+    #rename-playlist-form input {
+      max-width: 360px;
+    }
+
+    .settings-wrap {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 24px 32px;
+      display: grid;
+      gap: 16px;
+      align-content: start;
+      max-width: 1080px;
+    }
+
+    .section {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 16px;
+    }
+
+    .section h3 {
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .field label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      width: fit-content;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .info-tip {
+      position: relative;
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #526079;
+      border-radius: 50%;
+      color: #c8d4ea;
+      background: #151b26;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+      cursor: help;
+    }
+
+    .info-tip::after {
+      content: attr(data-tip);
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + 8px);
+      z-index: 20;
+      width: min(360px, calc(100vw - 32px));
+      padding: 9px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: #0b0f17;
+      color: var(--text);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.45;
+      white-space: normal;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(4px);
+      transition: opacity 0.12s, transform 0.12s;
+    }
+
+    .info-tip:hover::after,
+    .info-tip:focus::after {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .source-row,
+    .summary-settings-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .source-status,
+    .status-text {
+      min-height: 20px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .status-text.success,
+    .source-status.success { color: var(--success); }
+
+    .status-text.error,
+    .source-status.error { color: var(--danger); }
+
+    @media (max-width: 760px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar {
+        max-height: 42vh;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .main-header,
+      #rename-playlist-form {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .source-row,
+      .summary-settings-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>Playlists</h1>
+        <div class="create-form">
+          <input type="text" id="new-playlist-name" placeholder="New playlist name">
+          <button id="create-playlist" type="button">Add</button>
+        </div>
+      </div>
+      <ul id="playlist-list" class="playlist-list"></ul>
+    </aside>
+
+    <main class="main">
+      <div id="no-playlist-view" class="empty-state">
+        <p>Select a playlist or create a new one.</p>
+      </div>
+
+      <div id="playlist-view">
+        <div class="main-header">
+          <div class="playlist-title-row">
+            <h2 id="current-playlist-name">Playlist</h2>
+            <button id="rename-playlist-btn" class="ghost" type="button">Rename</button>
+          </div>
+          <div class="header-actions">
+            <button id="refresh-metadata-btn" class="ghost" type="button">Refresh Metadata</button>
+            <button id="delete-playlist" class="danger" type="button">Delete</button>
+          </div>
+        </div>
+
+        <div id="rename-playlist-form">
+          <input type="text" id="rename-playlist-input" placeholder="New playlist name">
+          <div class="form-actions">
+            <button id="rename-playlist-confirm" type="button">Save</button>
+            <button id="rename-playlist-cancel" class="ghost" type="button">Cancel</button>
+          </div>
+        </div>
+
+        <div class="settings-wrap">
+          <section class="section">
+            <h3>YouTube Source</h3>
+            <div class="field">
+              <label for="playlist-source-url">
+                Playlist URL or list id
+                <span class="info-tip" tabindex="0" data-tip="YouTube playlist source used by Sync Page. Enter a full playlist URL like https://www.youtube.com/playlist?list=WL or only the list id, for example WL.">i</span>
+              </label>
+              <input type="text" id="playlist-source-url" placeholder="https://www.youtube.com/playlist?list=...">
+            </div>
+            <div class="form-actions">
+              <button id="save-playlist-source" type="button">Save URL</button>
+              <span id="playlist-source-status" class="source-status"></span>
+            </div>
+          </section>
+
+          <section class="section">
+            <h3>Summary Settings</h3>
+            <div class="summary-settings-row">
+              <div class="field">
+                <label for="summary-model-input">
+                  Text summary model
+                  <span class="info-tip" tabindex="0" data-tip="Model used to generate the plain text summary. Enter the provider/model id, for example google/gemini-2.5-flash.">i</span>
+                </label>
+                <input type="text" id="summary-model-input" placeholder="google/gemini-2.5-flash">
+              </div>
+              <div class="field">
+                <label for="summary-html-model-input">
+                  HTML summary model
+                  <span class="info-tip" tabindex="0" data-tip="Model used to generate the HTML summary page. Enter the provider/model id, for example google/gemini-2.5-flash.">i</span>
+                </label>
+                <input type="text" id="summary-html-model-input" placeholder="google/gemini-2.5-flash">
+              </div>
+            </div>
+            <div class="summary-settings-row">
+              <div class="field">
+                <label for="summary-language-input">
+                  Language
+                  <span class="info-tip" tabindex="0" data-tip="Preferred output language for summaries. Enter a language name such as Ukrainian, English, or Polish.">i</span>
+                </label>
+                <input type="text" id="summary-language-input" placeholder="Ukrainian">
+              </div>
+              <div class="field">
+                <label for="summary-mode-select">
+                  Active summary mode
+                  <span class="info-tip" tabindex="0" data-tip="Controls which summary format is shown by default. Text summary is plain text; HTML summary page renders a formatted popup page.">i</span>
+                </label>
+                <select id="summary-mode-select">
+                  <option value="plain">Text summary</option>
+                  <option value="html">HTML summary page</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="transcript-languages-input">
+                Transcript language priority
+                <span class="info-tip" tabindex="0" data-tip="Preferred transcript languages in priority order. Use comma-separated language codes, for example en,uk,ru. The first available language is used.">i</span>
+              </label>
+              <input type="text" id="transcript-languages-input" placeholder="en,uk,ru">
+            </div>
+            <div class="summary-settings-row">
+              <div class="field">
+                <label for="preferred-tags-input">
+                  Preferred tags
+                  <span class="info-tip" tabindex="0" data-tip="Tags that the tag generator should prefer when they fit the video. Use comma-separated tags, for example coding,ai,travel,tech.">i</span>
+                </label>
+                <textarea id="preferred-tags-input" class="compact-textarea" placeholder="nodejs, database, ai"></textarea>
+              </div>
+              <div class="field">
+                <label for="tag-display-limit-input">
+                  Visible tags under video
+                  <span class="info-tip" tabindex="0" data-tip="Maximum number of tags shown under each video before extra tags are hidden. Enter a whole number, for example 5.">i</span>
+                </label>
+                <input type="number" id="tag-display-limit-input" min="1" max="50" step="1" placeholder="5">
+              </div>
+            </div>
+            <div class="field">
+              <label for="summary-prompt-input">
+                Text summary prompt
+                <span class="info-tip" tabindex="0" data-tip="Prompt sent to the text summary model. Describe exactly what the summary should contain, output structure, language, and formatting rules.">i</span>
+              </label>
+              <textarea id="summary-prompt-input"></textarea>
+            </div>
+            <div class="field">
+              <label for="summary-html-prompt-input">
+                HTML summary page prompt
+                <span class="info-tip" tabindex="0" data-tip="Prompt sent to the HTML summary model. Tell it what HTML fragment to return, allowed tags, style limits, and content requirements.">i</span>
+              </label>
+              <textarea id="summary-html-prompt-input"></textarea>
+            </div>
+            <div class="field">
+              <label for="tag-prompt-input">
+                Tag prompt
+                <span class="info-tip" tabindex="0" data-tip="Prompt sent to the tag model. It should instruct the model to return JSON with a tags array, for example { &quot;tags&quot;: [&quot;tag one&quot;, &quot;tag two&quot;] }.">i</span>
+              </label>
+              <textarea id="tag-prompt-input"></textarea>
+            </div>
+            <div class="summary-settings-actions">
+              <button id="summary-settings-save" type="button">Save Summary Settings</button>
+              <span id="summary-settings-status" class="status-text"></span>
+            </div>
+          </section>
+
+          <section class="section">
+            <h3>Maintenance</h3>
+            <p id="refresh-metadata-status" class="status-text"></p>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="api.js"></script>
+  <script src="management.js"></script>
+</body>
+</html>

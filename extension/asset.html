@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Video Asset</title>
+  <link rel="stylesheet" href="asset.css">
+</head>
+<body>
+  <header class="asset-header">
+    <div class="asset-heading">
+      <div id="asset-kind" class="asset-kind">Loading</div>
+      <h1 id="asset-title">Loading...</h1>
+      <div id="asset-meta" class="asset-meta"></div>
+    </div>
+    <div class="asset-actions">
+      <button id="asset-copy" type="button">Copy</button>
+      <button id="asset-refresh" type="button">Refresh</button>
+      <button id="asset-regenerate" type="button">Regenerate</button>
+      <button id="asset-youtube" type="button">YouTube</button>
+    </div>
+  </header>
+
+  <main class="asset-main">
+    <div id="asset-status" class="asset-status">Loading...</div>
+    <section id="asset-content" class="asset-content"></section>
+  </main>
+
+  <script src="api.js"></script>
+  <script src="asset-utils.js"></script>
+  <script src="asset.js"></script>
+</body>
+</html>
