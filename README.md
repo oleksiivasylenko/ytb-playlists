@@ -11,7 +11,7 @@ The goal is simple: make it easy to review, filter, summarize, move, restore, an
 - Stores personal playlists locally without depending on a YouTube account.
 - Adds videos from the active YouTube page through the popup or docked panel.
 - Syncs real YouTube playlists into local lists from the playlist page.
-- Tracks videos removed from the source playlist, unavailable on YouTube, moved, skipped, watched, or manually removed.
+- Tracks videos removed from the source playlist, unavailable on YouTube, quietly deleted by YouTube, moved, skipped, watched, or manually removed.
 - Provides a compact YouTube overlay panel with search, sorting, author grouping, and status filters.
 - Supports automatic cleanup for fully watched or skipped videos.
 - Helps decide what is still worth watching with transcripts, summaries, and tags.
