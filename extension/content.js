@@ -762,33 +762,29 @@
         }
       }
 
+      const cleanupNotFoundCount = cleanup
+        ? Math.max(0, cleanup.ids.size - cleanup.attempted.size - cleanup.alreadyGone)
+        : 0;
       const cleanupSummary = cleanup
-        ? ` YouTube cleanup removed ${cleanup.removed}, already gone ${cleanup.alreadyGone}, failed ${cleanup.failed}, not found ${Math.max(0, cleanup.ids.size - cleanup.attempted.size - cleanup.alreadyGone)}.`
+        ? ` YouTube cleanup removed ${cleanup.removed}, already gone ${cleanup.alreadyGone}, failed ${cleanup.failed}, not found ${cleanupNotFoundCount}.`
         : '';
       const doneMessage = `Done. Seen ${summary.seen_count}, new ${summary.added_count}, missing ${summary.removed_count}, unavailable ${summary.unavailable_count}.${cleanupSummary}${shortfallWarning}`;
       panel.setSyncStatus(doneMessage, 'success');
       await panel.loadPlaylists(true);
       await panel.loadVideos(true);
-      try {
-        const pendingCleanupVideos = await withSyncTimeout(
-          window.api.getYoutubeCleanupPendingVideos(playlist.id, { force: true }),
-          20000,
-          'Loading YouTube cleanup review state',
-          syncContext
-        );
-        const pendingCleanupList = Array.isArray(pendingCleanupVideos) ? pendingCleanupVideos : [];
-        const missingPendingCleanupVideos = pendingCleanupList.filter(video => video && video.id && !seenIds.has(video.id));
-        if (!shortfallWarning && missingPendingCleanupVideos.length > 0) {
-          safeStorageSet({
-            [YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY]: {
-              playlistId: playlist.id,
-              count: missingPendingCleanupVideos.length,
-              ts: Date.now()
-            }
-          });
+
+      if (cleanupNotFoundCount > 0) {
+        const cleanupReviewPrompt = {
+          playlistId: playlist.id,
+          count: cleanupNotFoundCount,
+          ts: Date.now()
+        };
+
+        if (panel.isOpen && panel.isOpen() && panel.offerYoutubeCleanupReview) {
+          await panel.offerYoutubeCleanupReview(cleanupReviewPrompt);
+        } else {
+          safeStorageSet({ [YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY]: cleanupReviewPrompt });
         }
-      } catch (error) {
-        console.warn(`YouTube cleanup review prompt was skipped: ${error.message || error}`);
       }
       return { success: true, message: doneMessage, state: 'success' };
     } catch (err) {
