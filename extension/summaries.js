@@ -1,11 +1,13 @@
 (function() {
   const HIDDEN_STORAGE_KEY = 'hiddenSummaryVideoIds';
+  const PAGE_STATE_STORAGE_KEY = 'summariesPageState';
   const REMOVAL_DELAY_MS = 5000;
 
   const listEl = document.getElementById('summary-list');
   const statusEl = document.getElementById('summary-status');
   const countEl = document.getElementById('summary-count');
   const refreshBtn = document.getElementById('refresh-summaries');
+  const playlistFilter = document.getElementById('summary-playlist-filter');
   const textSearch = document.getElementById('summary-text-search');
   const statusFilter = document.getElementById('summary-status-filter');
   const tagFilterField = document.getElementById('summary-tag-filter');
@@ -18,6 +20,7 @@
   let summaries = [];
   let playlists = [];
   let selectedTagFilters = [];
+  let selectedPlaylistIds = new Set(['all']);
   let hiddenVideoIds = new Set();
   let hiddenFilter = 'visible';
   let activeTagSuggestionIndex = -1;
@@ -30,6 +33,18 @@
 
   function storageSet(payload) {
     return new Promise(resolve => chrome.storage.local.set(payload, resolve));
+  }
+
+  function savePageState() {
+    storageSet({
+      [PAGE_STATE_STORAGE_KEY]: {
+        selectedPlaylistIds: Array.from(selectedPlaylistIds),
+        statusFilter: statusFilter.value,
+        textSearch: textSearch.value,
+        selectedTagFilters,
+        hiddenFilter
+      }
+    });
   }
 
   function setStatus(text, state = '') {
@@ -64,6 +79,11 @@
     if (statusFilter.value === 'removed_from_source') return status === 'removed_from_source' || status === 'removed';
     if (statusFilter.value === 'unavailable_on_youtube') return status === 'unavailable_on_youtube' || status === 'unavailable';
     return status === statusFilter.value;
+  }
+
+  function matchesPlaylistFilter(video) {
+    if (selectedPlaylistIds.has('all') || selectedPlaylistIds.size === 0) return true;
+    return selectedPlaylistIds.has(String(video.playlist_id));
   }
 
   function getVideoTags(video) {
@@ -122,6 +142,7 @@
 
   function getFilteredSummaries() {
     return summaries.filter(video => {
+      if (!matchesPlaylistFilter(video)) return false;
       if (!matchesStatusFilter(video)) return false;
       if (!matchesHiddenFilter(video)) return false;
       if (!matchesTagFilters(video)) return false;
@@ -223,12 +244,49 @@
         selectedTagFilters = selectedTagFilters.filter(item => getTagKey(item) !== getTagKey(tag));
         renderTagChips();
         renderSummaries();
+        savePageState();
       });
 
       chip.appendChild(removeBtn);
       tagFilterChips.appendChild(chip);
     });
     tagFilterInput.placeholder = selectedTagFilters.length ? '' : 'Filter by tags...';
+  }
+
+  function renderPlaylistFilterOptions() {
+    const current = new Set(selectedPlaylistIds);
+    playlistFilter.innerHTML = '';
+
+    const allOption = document.createElement('option');
+    allOption.value = 'all';
+    allOption.textContent = 'All';
+    allOption.selected = current.has('all') || current.size === 0;
+    playlistFilter.appendChild(allOption);
+
+    playlists.forEach(playlist => {
+      const option = document.createElement('option');
+      option.value = String(playlist.id);
+      option.textContent = playlist.name || `Playlist ${playlist.id}`;
+      option.selected = current.has(String(playlist.id));
+      playlistFilter.appendChild(option);
+    });
+  }
+
+  function applyPlaylistFilterSelection() {
+    const values = Array.from(playlistFilter.selectedOptions).map(option => option.value);
+    if (values.length === 0) {
+      selectedPlaylistIds = new Set(['all']);
+    } else if (values.includes('all') && !selectedPlaylistIds.has('all')) {
+      selectedPlaylistIds = new Set(['all']);
+    } else {
+      const playlistIds = values.filter(value => value !== 'all');
+      selectedPlaylistIds = new Set(playlistIds.length > 0 ? playlistIds : ['all']);
+    }
+
+    renderPlaylistFilterOptions();
+    renderTagSuggestions();
+    renderSummaries();
+    savePageState();
   }
 
   function getTagSuggestionItems() {
@@ -273,6 +331,7 @@
     tagFilterInput.value = '';
     renderTagChips();
     renderSummaries();
+    savePageState();
     tagFilterInput.focus();
   }
 
@@ -679,8 +738,32 @@
   }
 
   async function loadHiddenState() {
-    const stored = await storageGet([HIDDEN_STORAGE_KEY]);
+    const stored = await storageGet([HIDDEN_STORAGE_KEY, PAGE_STATE_STORAGE_KEY]);
     hiddenVideoIds = new Set(Array.isArray(stored[HIDDEN_STORAGE_KEY]) ? stored[HIDDEN_STORAGE_KEY] : []);
+
+    const pageState = stored[PAGE_STATE_STORAGE_KEY] || {};
+    if (Array.isArray(pageState.selectedPlaylistIds) && pageState.selectedPlaylistIds.length > 0) {
+      selectedPlaylistIds = new Set(pageState.selectedPlaylistIds.map(String));
+    }
+    if (typeof pageState.statusFilter === 'string') {
+      const option = Array.from(statusFilter.options).find(item => item.value === pageState.statusFilter);
+      if (option) statusFilter.value = pageState.statusFilter;
+    }
+    if (typeof pageState.textSearch === 'string') textSearch.value = pageState.textSearch;
+    if (Array.isArray(pageState.selectedTagFilters)) {
+      const seen = new Set();
+      selectedTagFilters = pageState.selectedTagFilters
+        .map(normalizeTag)
+        .filter(tag => {
+          const key = tag.toLowerCase();
+          if (!tag || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+    }
+    if (['visible', 'all', 'hidden'].includes(pageState.hiddenFilter)) {
+      hiddenFilter = pageState.hiddenFilter;
+    }
   }
 
   async function loadData(force = false) {
@@ -694,6 +777,12 @@
       ]);
       summaries = Array.isArray(summaryRows) ? summaryRows : [];
       playlists = Array.isArray(playlistRows) ? playlistRows : [];
+      const availablePlaylistIds = new Set(playlists.map(playlist => String(playlist.id)));
+      selectedPlaylistIds = selectedPlaylistIds.has('all')
+        ? new Set(['all'])
+        : new Set(Array.from(selectedPlaylistIds).filter(id => availablePlaylistIds.has(id)));
+      if (selectedPlaylistIds.size === 0) selectedPlaylistIds.add('all');
+      renderPlaylistFilterOptions();
       setStatus('Loaded.', 'success');
       renderTagSuggestions();
       renderSummaries();
@@ -706,13 +795,16 @@
   }
 
   refreshBtn.addEventListener('click', () => loadData(true));
+  playlistFilter.addEventListener('change', applyPlaylistFilterSelection);
   textSearch.addEventListener('input', () => {
     renderTagSuggestions();
     renderSummaries();
+    savePageState();
   });
   statusFilter.addEventListener('change', () => {
     renderTagSuggestions();
     renderSummaries();
+    savePageState();
   });
   tagFilterField.addEventListener('click', () => tagFilterInput.focus());
   tagFilterInput.addEventListener('input', renderTagSuggestions);
@@ -736,6 +828,7 @@
       selectedTagFilters = selectedTagFilters.slice(0, -1);
       renderTagChips();
       renderSummaries();
+      savePageState();
       return;
     }
 
@@ -752,6 +845,7 @@
       hiddenFilter = button.dataset.hiddenFilter || 'visible';
       renderTagSuggestions();
       renderSummaries();
+      savePageState();
     });
   });
 
