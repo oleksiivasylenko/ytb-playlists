@@ -17,9 +17,12 @@
   let watchControlsEventsController = null;
   const watchControlsRetryIds = new Set();
   let panelApi = null;
+  let activePlaylistSync = null;
   const ytbPreview = window.ytbPreview.create({ id: 'ytb-actions-preview', maxWidth: 520, minWidth: 300, positionMode: 'document' });
   const SYNC_PROGRESS_STATUS_KEY = 'playlist-sync-progress';
   const SYNC_CLEANUP_STATUS_KEY = 'playlist-sync-cleanup-progress';
+  const SYNC_MAX_DURATION_MS = 20 * 60 * 1000;
+  const SYNC_IDLE_TIMEOUT_MS = 75 * 1000;
 
   function isExtensionContextError(error) {
     const message = String(error && (error.message || error) || '');
@@ -166,6 +169,69 @@
 
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function createSyncStopError(message) {
+    const error = new Error(message || 'Sync stopped.');
+    error.isSyncStop = true;
+    return error;
+  }
+
+  function startSyncContext() {
+    const now = Date.now();
+    const context = {
+      cancelled: false,
+      cancelMessage: '',
+      startedAt: now,
+      deadlineAt: now + SYNC_MAX_DURATION_MS,
+      lastProgressAt: now
+    };
+    activePlaylistSync = context;
+    return context;
+  }
+
+  function stopActivePlaylistSync(message = 'Sync stopped.') {
+    if (!activePlaylistSync || activePlaylistSync.cancelled) return false;
+    activePlaylistSync.cancelled = true;
+    activePlaylistSync.cancelMessage = message;
+    return true;
+  }
+
+  function assertSyncCanContinue(context) {
+    if (!context || activePlaylistSync !== context) {
+      throw createSyncStopError('Sync stopped.');
+    }
+
+    if (context.cancelled) {
+      throw createSyncStopError(context.cancelMessage || 'Sync stopped.');
+    }
+
+    const now = Date.now();
+    if (now > context.deadlineAt) {
+      throw createSyncStopError('Sync timed out after 20 minutes. Reload the YouTube playlist page and try again.');
+    }
+
+    if (now - context.lastProgressAt > SYNC_IDLE_TIMEOUT_MS) {
+      throw createSyncStopError('Sync timed out while waiting for YouTube to load more videos.');
+    }
+  }
+
+  async function withSyncTimeout(promise, ms, label, syncContext) {
+    if (syncContext) assertSyncCanContinue(syncContext);
+
+    let timeoutId = null;
+    try {
+      const result = await Promise.race([
+        Promise.resolve(promise),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(createSyncStopError(`${label} timed out.`)), ms);
+        })
+      ]);
+      if (syncContext) assertSyncCanContinue(syncContext);
+      return result;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
   }
 
   function extractVideoIdFromUrl(url) {
@@ -457,10 +523,11 @@
     return { success: true };
   }
 
-  async function cleanupRemovedYoutubeEntries(entries, cleanup) {
+  async function cleanupRemovedYoutubeEntries(entries, cleanup, syncContext = null) {
     if (!cleanup || !cleanup.enabled) return;
 
     for (const entry of entries) {
+      if (syncContext) assertSyncCanContinue(syncContext);
       const videoId = entry.video.id;
       if (!cleanup.ids.has(videoId) || cleanup.attempted.has(videoId)) continue;
 
@@ -473,14 +540,24 @@
       if (result.success) {
         cleanup.removed++;
         try {
-          await window.api.markYoutubeCleanup(cleanup.playlistId, videoId, 'removed');
+          await withSyncTimeout(
+            window.api.markYoutubeCleanup(cleanup.playlistId, videoId, 'removed'),
+            15000,
+            'Saving YouTube cleanup state',
+            syncContext
+          );
         } catch (error) {
           console.warn(`YouTube cleanup state was not saved for ${videoId}: ${error.message || error}`);
         }
       } else {
         cleanup.failed++;
         try {
-          await window.api.markYoutubeCleanup(cleanup.playlistId, videoId, 'failed', result.error);
+          await withSyncTimeout(
+            window.api.markYoutubeCleanup(cleanup.playlistId, videoId, 'failed', result.error),
+            15000,
+            'Saving YouTube cleanup state',
+            syncContext
+          );
         } catch (error) {
           console.warn(`YouTube cleanup failure state was not saved for ${videoId}: ${error.message || error}`);
         }
@@ -491,36 +568,45 @@
     }
   }
 
-  async function sendSyncVideos(runId, videos, seenIds) {
+  async function sendSyncVideos(runId, videos, seenIds, syncContext = null) {
     const pending = [];
     for (const video of videos) {
+      if (syncContext) assertSyncCanContinue(syncContext);
       if (seenIds.has(video.id)) continue;
       seenIds.add(video.id);
       pending.push({ ...video, sortOrder: seenIds.size });
     }
 
     for (let i = 0; i < pending.length; i += 50) {
-      await window.api.sendSyncBatch(runId, pending.slice(i, i + 50));
+      if (syncContext) assertSyncCanContinue(syncContext);
+      await withSyncTimeout(
+        window.api.sendSyncBatch(runId, pending.slice(i, i + 50)),
+        20000,
+        'Sync batch',
+        syncContext
+      );
     }
 
     return pending.length;
   }
 
-  async function collectAndSendSyncVideos(runId, seenIds, cleanup = null) {
+  async function collectAndSendSyncVideos(runId, seenIds, cleanup = null, syncContext = null) {
+    if (syncContext) assertSyncCanContinue(syncContext);
     const entries = collectLoadedPlaylistEntries();
-    await cleanupRemovedYoutubeEntries(entries, cleanup);
-    return sendSyncVideos(runId, entries.map(entry => entry.video), seenIds);
+    await cleanupRemovedYoutubeEntries(entries, cleanup, syncContext);
+    return sendSyncVideos(runId, entries.map(entry => entry.video), seenIds, syncContext);
   }
 
-  async function waitForPlaylistProgress(runId, seenIds, previousHeight, timeoutMs, cleanup = null) {
+  async function waitForPlaylistProgress(runId, seenIds, previousHeight, timeoutMs, cleanup = null, syncContext = null) {
     const deadline = Date.now() + timeoutMs;
     let addedTotal = 0;
     let heightChanged = false;
 
     while (Date.now() < deadline) {
+      if (syncContext) assertSyncCanContinue(syncContext);
       await delay(500);
 
-      const added = await collectAndSendSyncVideos(runId, seenIds, cleanup);
+      const added = await collectAndSendSyncVideos(runId, seenIds, cleanup, syncContext);
       addedTotal += added;
 
       const metrics = getScrollMetrics();
@@ -541,21 +627,38 @@
 
 
   async function performPlaylistSync({ playlistId, source, cleanupYoutube, panel }) {
+    if (activePlaylistSync && !activePlaylistSync.cancelled) {
+      return { success: false, error: 'Sync is already running.' };
+    }
+
+    const syncContext = startSyncContext();
     const seenIds = new Set();
     let run = null;
     let playlist = null;
 
     try {
+      assertSyncCanContinue(syncContext);
       panel.setSyncStatus('Starting sync...', 'busy');
-      const started = await window.api.startSync({
-        ...source,
-        playlistId
-      });
+      const started = await withSyncTimeout(
+        window.api.startSync({
+          ...source,
+          playlistId
+        }),
+        20000,
+        'Starting sync',
+        syncContext
+      );
+      assertSyncCanContinue(syncContext);
       run = started.run;
       playlist = started.playlist;
       panel.setCurrentPlaylistId(playlist.id);
 
-      const cleanupVideos = await window.api.getYoutubeCleanupPendingVideos(playlist.id);
+      const cleanupVideos = await withSyncTimeout(
+        window.api.getYoutubeCleanupPendingVideos(playlist.id),
+        20000,
+        'Loading YouTube cleanup state',
+        syncContext
+      );
       const cleanup = cleanupYoutube && cleanupVideos.length > 0
         ? {
             enabled: true,
@@ -574,7 +677,8 @@
       let shortfallWarning = '';
 
       for (let round = 0; round < 1600; round++) {
-        const addedNow = await collectAndSendSyncVideos(run.id, seenIds, cleanup);
+        assertSyncCanContinue(syncContext);
+        const addedNow = await collectAndSendSyncVideos(run.id, seenIds, cleanup, syncContext);
         const metrics = getScrollMetrics();
         const expectedSuffix = expectedCount ? ` / ${expectedCount}` : '';
         panel.setSyncStatus(`Synced ${seenIds.size}${expectedSuffix} videos. Loading more...`, 'busy', {
@@ -584,12 +688,13 @@
         if (metrics.nearBottom) holdAtBottomForSync();
         else scrollDownForSync();
 
-        const progress = await waitForPlaylistProgress(run.id, seenIds, metrics.scrollHeight, 3000, cleanup);
+        const progress = await waitForPlaylistProgress(run.id, seenIds, metrics.scrollHeight, 3000, cleanup, syncContext);
         const madeProgress = addedNow > 0 || progress.added > 0 || progress.heightChanged;
 
         if (madeProgress) {
           idleBottomRounds = 0;
           hardIdleRounds = 0;
+          syncContext.lastProgressAt = Date.now();
           continue;
         }
 
@@ -612,7 +717,12 @@
         if (idleBottomRounds >= 10) break;
       }
 
-      await collectAndSendSyncVideos(run.id, seenIds, cleanup);
+      assertSyncCanContinue(syncContext);
+      await collectAndSendSyncVideos(run.id, seenIds, cleanup, syncContext);
+
+      if (seenIds.size === 0) {
+        throw createSyncStopError('Sync stopped because no videos were loaded from YouTube. Reload the playlist page and try again.');
+      }
 
       const finalExpectedCount = getExpectedPlaylistVideoCount();
       if (finalExpectedCount && seenIds.size < finalExpectedCount) {
@@ -620,17 +730,28 @@
         shortfallWarning = shortfallWarning || ` YouTube lists ${finalExpectedCount}, but only ${seenIds.size} video IDs loaded; ${missingCount} are probably unavailable placeholders.`;
       }
 
+      assertSyncCanContinue(syncContext);
       panel.setSyncStatus('Checking missing videos from DB...', 'busy');
-      const finalized = await window.api.finalizeSync(run.id, playlist.id, {
-        skipMissingCheck: !!shortfallWarning
-      });
+      const finalized = await withSyncTimeout(
+        window.api.finalizeSync(run.id, playlist.id, {
+          skipMissingCheck: !!shortfallWarning
+        }),
+        5 * 60 * 1000,
+        'Finalizing sync',
+        syncContext
+      );
       const summary = finalized.run;
 
       if (cleanup && !shortfallWarning) {
         const notFoundIds = Array.from(cleanup.ids).filter(id => !cleanup.attempted.has(id));
         for (const videoId of notFoundIds) {
           try {
-            await window.api.markYoutubeCleanup(cleanup.playlistId, videoId, 'removed');
+            await withSyncTimeout(
+              window.api.markYoutubeCleanup(cleanup.playlistId, videoId, 'removed'),
+              15000,
+              'Saving YouTube cleanup state',
+              syncContext
+            );
             cleanup.alreadyGone++;
           } catch (error) {
             cleanup.failed++;
@@ -655,6 +776,9 @@
       panel.setSyncStatus(message, 'error');
       console.error('Playlist sync failed:', err);
       return { success: false, error: message };
+    } finally {
+      if (activePlaylistSync === syncContext) activePlaylistSync = null;
+      safeStorageSet({ activeSyncTabId: null });
     }
   }
 
@@ -689,6 +813,7 @@
         : { success: false, error: 'Open a YouTube playlist page first.' };
     },
     startSyncPage: performPlaylistSync,
+    stopSyncPage: async () => ({ success: true, stopped: stopActivePlaylistSync('Sync stopped by user.') }),
     openVideo: openVideoFromPanel,
     onVideosChanged: updateWatchControlsAfterPanelChange
   });
@@ -715,6 +840,13 @@
         panelApi.setSyncStatus(err.message || 'Sync failed.', 'error');
       });
       sendResponse({ success: true });
+      return false;
+    }
+
+    if (request.action === 'stopPlaylistSync') {
+      const stopped = stopActivePlaylistSync('Sync stopped by user.');
+      if (stopped && panelApi) panelApi.setSyncStatus('Stopping sync...', 'busy');
+      sendResponse({ success: true, stopped });
       return false;
     }
 

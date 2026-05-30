@@ -36,6 +36,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       return { success: true, keepBusy: true, message: 'Sync started on YouTube page...' };
+    },
+    stopSyncPage: async () => {
+      const response = await sendRuntimeMessage({ action: 'stopPlaylistSync' });
+      return response || { success: false, error: 'Failed to stop sync.' };
     }
   });
 });

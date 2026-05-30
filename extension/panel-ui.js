@@ -190,6 +190,8 @@
   let removalTimerId = null;
   let removalCommitInProgress = false;
   let syncInProgress = false;
+  let syncStopInProgress = false;
+  let syncRequestToken = 0;
   let lastSyncStatusText = '';
   let lastSyncStatusState = '';
   let lastSyncStatusKey = '';
@@ -212,6 +214,7 @@
   const REMOVAL_DELAY_MS = 5000;
   const MOVE_DESELECT_HOLD_MS = 1000;
   const SYNC_STATUS_DISPLAY_MS = 1500;
+  const SYNC_BUSY_STATUS_TTL_MS = 22 * 60 * 1000;
   const AUTO_TRANSCRIPT_STATUS_KEY = 'auto-transcript-progress';
   const AUTO_SUMMARY_STATUS_KEY = 'auto-summary-progress';
   const AUTO_TAG_STATUS_KEY = 'auto-tag-progress';
@@ -261,10 +264,28 @@
       removalTimerId = null;
     }
     syncInProgress = false;
+    syncStopInProgress = false;
+    updateSyncButtonState();
     syncBtn.disabled = true;
     refreshBtn.disabled = true;
     setSyncStatus('Extension was reloaded. Reopen the panel.', 'error');
     if (options.onInvalidated) options.onInvalidated();
+  }
+
+  function updateSyncButtonState() {
+    syncBtn.textContent = syncInProgress
+      ? syncStopInProgress ? 'Stopping...' : 'Stop Sync'
+      : 'Sync Page';
+    syncBtn.classList.toggle('yt-sync-stop-button', syncInProgress);
+    syncBtn.disabled = !extensionContextAlive || syncStopInProgress;
+    syncBtn.title = syncInProgress ? 'Stop current sync' : 'Sync current YouTube page';
+    syncBtn.setAttribute('aria-label', syncBtn.title);
+  }
+
+  function setSyncRunning(running) {
+    syncInProgress = !!running;
+    if (!syncInProgress) syncStopInProgress = false;
+    updateSyncButtonState();
   }
 
   function handleExtensionContextError(error) {
@@ -597,6 +618,7 @@
   function shouldShowStoredStatus(status) {
     if (!status || !status.text) return false;
     if (String(status.text).includes('sidePanel.open() may only be called')) return false;
+    if (status.state === 'busy' && Number(status.ts) > 0 && Date.now() - Number(status.ts) > SYNC_BUSY_STATUS_TTL_MS) return false;
     return true;
   }
 
@@ -2898,7 +2920,10 @@
 
   async function syncCurrentPage(syncOptions = {}) {
     if (syncOptions && syncOptions.type) syncOptions = {};
-    if (syncInProgress) return;
+    if (syncInProgress) {
+      await stopCurrentSync();
+      return;
+    }
     if (!currentPlaylistId) {
       showSyncPopup('Select a playlist first.');
       return;
@@ -2918,8 +2943,8 @@
       return;
     }
 
-    syncInProgress = true;
-    syncBtn.disabled = true;
+    setSyncRunning(true);
+    const syncToken = ++syncRequestToken;
     setSyncStatus('Checking YouTube page...', 'busy');
     let keepBusy = false;
 
@@ -2927,6 +2952,7 @@
       const activeSource = options.getActivePlaylistSource
         ? await options.getActivePlaylistSource(api)
         : await sendRuntimeMessage({ action: 'getActiveYoutubePlaylistSource' });
+      if (syncToken !== syncRequestToken) return;
       const source = activeSource && activeSource.source ? activeSource.source : activeSource;
       if (!source || source.success === false || !source.sourceId) {
         throw new Error((source && source.error) || 'Open a YouTube playlist page first.');
@@ -2937,9 +2963,11 @@
       }
 
       const removedVideos = await window.api.getYoutubeCleanupPendingVideos(currentPlaylistId);
+      if (syncToken !== syncRequestToken) return;
       const cleanupYoutube = typeof syncOptions.cleanupYoutube === 'boolean'
         ? syncOptions.cleanupYoutube
         : removedVideos.length > 0 ? await askYoutubeCleanup(removedVideos.length) : false;
+      if (syncToken !== syncRequestToken) return;
 
       safeStorageSet({ selectedPlaylistId: currentPlaylistId });
       const response = options.startSyncPage
@@ -2956,6 +2984,7 @@
             expectedSourceId,
             cleanupYoutube
           });
+      if (syncToken !== syncRequestToken) return;
 
       if (!response.success) {
         setSyncStatus(response.error || 'Failed to start sync.', 'error');
@@ -2970,9 +2999,35 @@
       showSyncPopup(err.message || 'Failed to start sync.');
     } finally {
       if (!keepBusy) {
-        syncInProgress = false;
-        syncBtn.disabled = false;
+        setSyncRunning(false);
       }
+    }
+  }
+
+  async function stopCurrentSync() {
+    if (!syncInProgress || syncStopInProgress) return;
+    syncRequestToken++;
+    syncStopInProgress = true;
+    updateSyncButtonState();
+    setSyncStatus('Stopping sync...', 'busy');
+
+    try {
+      const response = options.stopSyncPage
+        ? await options.stopSyncPage()
+        : await sendRuntimeMessage({ action: 'stopPlaylistSync' });
+
+      if (!response || response.success === false) {
+        throw new Error((response && response.error) || 'Failed to stop sync.');
+      }
+
+      if (!response.stopped) {
+        setSyncRunning(false);
+        setSyncStatus('No active sync found.', 'error');
+      }
+    } catch (err) {
+      syncStopInProgress = false;
+      updateSyncButtonState();
+      showSyncPopup(err.message || 'Failed to stop sync.');
     }
   }
 
@@ -3196,8 +3251,7 @@
       const status = changes.dockedSyncStatus.newValue;
       if (!shouldShowStoredStatus(status)) {
         setSyncStatus('', '', { persist: false });
-        syncInProgress = false;
-        syncBtn.disabled = false;
+        setSyncRunning(false);
         return;
       }
 
@@ -3206,12 +3260,10 @@
         persist: false
       });
       if (status.state === 'busy') {
-        syncInProgress = true;
-        syncBtn.disabled = true;
+        setSyncRunning(true);
       }
       if (status.state === 'success' || status.state === 'error') {
-        syncInProgress = false;
-        syncBtn.disabled = false;
+        setSyncRunning(false);
         if (status.state === 'success') {
           loadPlaylists(true);
         }

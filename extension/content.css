@@ -160,6 +160,15 @@
   background: #65b8ff;
 }
 
+.yt-playlist-alt-row button.yt-sync-stop-button {
+  background: #ff6b6b;
+  color: #0f0f0f;
+}
+
+.yt-playlist-alt-row button.yt-sync-stop-button:hover {
+  background: #ff8787;
+}
+
 .yt-playlist-alt-row button:disabled {
   opacity: 0.55;
   cursor: not-allowed;

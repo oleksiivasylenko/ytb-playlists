@@ -161,11 +161,43 @@ async function startPlaylistSync(request) {
       expectedSourceId: request.expectedSourceId,
       cleanupYoutube: request.cleanupYoutube
     });
+    await chrome.storage.local.set({ activeSyncTabId: tab.id });
   } catch (err) {
-    throw new Error('Reload the YouTube playlist page, then try Sync Page again.');
+    throw new Error('Cannot connect to this YouTube tab. Reload it and try again.');
   }
 
   return { success: true };
+}
+
+async function stopPlaylistSync() {
+  const stored = await chrome.storage.local.get(['activeSyncTabId']);
+  let tab = null;
+  if (stored.activeSyncTabId) {
+    try {
+      tab = await chrome.tabs.get(stored.activeSyncTabId);
+    } catch (err) {
+      tab = null;
+    }
+  }
+
+  if (!isYoutubeTab(tab)) {
+    const active = await getActiveYoutubePlaylistTab();
+    tab = active.tab;
+    if (!tab || !tab.id) {
+      throw new Error(active.error || 'Open the YouTube playlist page before stopping sync.');
+    }
+  }
+
+  if (!tab || !tab.id) {
+    throw new Error('Open the YouTube playlist page before stopping sync.');
+  }
+
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, { action: 'stopPlaylistSync' });
+    return response || { success: true };
+  } catch (err) {
+    throw new Error('Cannot connect to this YouTube tab. Reload it and try again.');
+  }
 }
 
 async function openYoutubeVideo(videoId, options = {}) {
@@ -222,6 +254,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     task = getActiveYoutubePlaylistSource();
   } else if (request.action === 'startPlaylistSync') {
     task = startPlaylistSync(request);
+  } else if (request.action === 'stopPlaylistSync') {
+    task = stopPlaylistSync(request);
   } else if (request.action === 'openYoutubeVideo') {
     task = openYoutubeVideo(request.videoId, { newTab: !!request.newTab });
   } else if (request.action === 'apiFetch') {
