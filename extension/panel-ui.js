@@ -28,6 +28,10 @@
   const dateFilterDirection = document.getElementById('yt-playlist-alt-date-direction');
   const dateFilterAmount = document.getElementById('yt-playlist-alt-date-amount');
   const dateFilterUnit = document.getElementById('yt-playlist-alt-date-unit');
+  let tagFilterField = document.getElementById('yt-playlist-alt-tag-filter');
+  let tagFilterChips = document.getElementById('yt-playlist-alt-tag-filter-chips');
+  let tagFilterInput = document.getElementById('yt-playlist-alt-tag-filter-input');
+  let tagSuggestions = document.getElementById('yt-playlist-alt-tag-suggestions');
   const removeFullyWatchedInput = document.getElementById('yt-playlist-alt-remove-fully-watched');
   const removeOnSkipInput = document.getElementById('yt-playlist-alt-remove-on-skip');
   const videoList = document.getElementById('yt-playlist-alt-videos');
@@ -125,6 +129,24 @@
     const removedFromSourceOption = statusFilterSelect.querySelector('option[value="removed_from_source"]');
     statusFilterSelect.insertBefore(movedOption, removedFromSourceOption);
   }
+  if (!tagFilterField) {
+    const tagSection = document.createElement('div');
+    tagSection.className = 'yt-settings-section';
+    tagSection.innerHTML = `
+      <div class="yt-settings-label">Tags</div>
+      <div id="yt-playlist-alt-tag-filter" class="yt-tag-filter-field">
+        <div id="yt-playlist-alt-tag-filter-chips" class="yt-tag-filter-chips"></div>
+        <input type="text" id="yt-playlist-alt-tag-filter-input" placeholder="Filter by tags..." autocomplete="off">
+        <div id="yt-playlist-alt-tag-suggestions" class="yt-tag-suggestions" role="listbox"></div>
+      </div>
+    `;
+    const viewSection = statusFilterSelect.closest('.yt-settings-section');
+    viewSection.insertAdjacentElement('afterend', tagSection);
+    tagFilterField = document.getElementById('yt-playlist-alt-tag-filter');
+    tagFilterChips = document.getElementById('yt-playlist-alt-tag-filter-chips');
+    tagFilterInput = document.getElementById('yt-playlist-alt-tag-filter-input');
+    tagSuggestions = document.getElementById('yt-playlist-alt-tag-suggestions');
+  }
   let toggleBtn = null;
 
   if (isFloating) {
@@ -159,6 +181,8 @@
   let dateDirection = 'newer';
   let dateAmount = '';
   let dateUnit = 'months';
+  let selectedTagFilters = [];
+  let activeTagSuggestionIndex = -1;
   let pendingRemovalRecords = [];
   const pendingRemovals = new Map();
   const selectedMoveVideoIds = new Set();
@@ -538,9 +562,11 @@
         });
 
         tagLoads.delete(payload.videoId);
+        renderTagSuggestions();
         if (updated) {
           updateVideoAssetButtons(updated);
-          updateVideoTagsDisplay(updated);
+          if (selectedTagFilters.length > 0) renderVideos();
+          else updateVideoTagsDisplay(updated);
           if (!autoTagRun) setSyncStatus('Tags are ready.', 'success', { persist: false });
         }
         return;
@@ -731,6 +757,196 @@
     return getVideoTags(video).length > 0;
   }
 
+  function normalizeTagFilterValue(tag) {
+    return typeof tag === 'string' ? tag.replace(/\s+/g, ' ').trim() : '';
+  }
+
+  function getTagFilterKey(tag) {
+    return normalizeTagFilterValue(tag).toLowerCase();
+  }
+
+  function getUniqueVideoTags() {
+    const tagsByKey = new Map();
+    allVideos.forEach(video => {
+      getVideoTags(video).forEach(tag => {
+        const value = normalizeTagFilterValue(tag);
+        const key = value.toLowerCase();
+        if (value && !tagsByKey.has(key)) tagsByKey.set(key, value);
+      });
+    });
+
+    return Array.from(tagsByKey.values()).sort((a, b) => a.localeCompare(b));
+  }
+
+  function normalizeSelectedTagFilters(tags) {
+    const seen = new Set();
+    const normalized = [];
+    (Array.isArray(tags) ? tags : []).forEach(tag => {
+      const value = normalizeTagFilterValue(tag);
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) return;
+      seen.add(key);
+      normalized.push(value);
+    });
+    return normalized;
+  }
+
+  function resolveTagFilterValue(value) {
+    const normalized = normalizeTagFilterValue(value);
+    if (!normalized) return '';
+    const key = normalized.toLowerCase();
+    return getUniqueVideoTags().find(tag => tag.toLowerCase() === key) || normalized;
+  }
+
+  function appendHighlightedTagText(element, tag, query) {
+    const match = query ? tag.toLowerCase().indexOf(query.toLowerCase()) : -1;
+    if (match < 0) {
+      element.textContent = tag;
+      return;
+    }
+
+    const before = tag.slice(0, match);
+    const highlighted = tag.slice(match, match + query.length);
+    const after = tag.slice(match + query.length);
+    if (before) element.appendChild(document.createTextNode(before));
+
+    const mark = document.createElement('span');
+    mark.className = 'yt-tag-suggestion-highlight';
+    mark.textContent = highlighted;
+    element.appendChild(mark);
+
+    if (after) element.appendChild(document.createTextNode(after));
+  }
+
+  function hideTagSuggestions() {
+    if (!tagSuggestions) return;
+    activeTagSuggestionIndex = -1;
+    tagSuggestions.innerHTML = '';
+    tagSuggestions.classList.remove('yt-tag-suggestions--open');
+  }
+
+  function getTagSuggestionItems() {
+    return tagSuggestions ? Array.from(tagSuggestions.querySelectorAll('.yt-tag-suggestion')) : [];
+  }
+
+  function setActiveTagSuggestion(index) {
+    const items = getTagSuggestionItems();
+    if (items.length === 0) {
+      activeTagSuggestionIndex = -1;
+      return;
+    }
+
+    activeTagSuggestionIndex = (index + items.length) % items.length;
+    items.forEach((item, itemIndex) => {
+      const active = itemIndex === activeTagSuggestionIndex;
+      item.classList.toggle('yt-tag-suggestion--active', active);
+      item.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (active) item.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  function getActiveTagSuggestionValue() {
+    if (!tagSuggestions) return '';
+    const suggestions = getTagSuggestionItems();
+    const selected = suggestions[activeTagSuggestionIndex] || suggestions[0];
+    return selected ? selected.dataset.tag || selected.textContent || '' : '';
+  }
+
+  function renderTagSuggestions() {
+    if (!tagSuggestions || !tagFilterInput) return;
+    const selectedKeys = new Set(selectedTagFilters.map(getTagFilterKey));
+    const query = tagFilterInput.value.trim();
+    const queryKey = query.toLowerCase();
+    if (!query) {
+      hideTagSuggestions();
+      return;
+    }
+
+    const suggestions = getUniqueVideoTags()
+      .filter(tag => !selectedKeys.has(tag.toLowerCase()))
+      .filter(tag => tag.toLowerCase().includes(queryKey))
+      .slice(0, 80);
+
+    tagSuggestions.innerHTML = '';
+    tagSuggestions.classList.toggle('yt-tag-suggestions--open', suggestions.length > 0);
+    suggestions.forEach(tag => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'yt-tag-suggestion';
+      item.dataset.tag = tag;
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', 'false');
+      appendHighlightedTagText(item, tag, query);
+      item.addEventListener('mouseenter', () => setActiveTagSuggestion(suggestions.indexOf(tag)));
+      item.addEventListener('mousedown', event => {
+        event.preventDefault();
+        addTagFilter(tag);
+      });
+      tagSuggestions.appendChild(item);
+    });
+    setActiveTagSuggestion(0);
+  }
+
+  function renderSelectedTagFilters() {
+    if (!tagFilterChips || !tagFilterInput) return;
+    tagFilterChips.innerHTML = '';
+    selectedTagFilters.forEach(tag => {
+      const chip = document.createElement('span');
+      chip.className = 'yt-tag-filter-chip';
+      chip.textContent = tag;
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.title = `Remove ${tag}`;
+      removeButton.setAttribute('aria-label', `Remove ${tag}`);
+      removeButton.textContent = 'x';
+      removeButton.addEventListener('click', () => removeTagFilter(tag));
+      chip.appendChild(removeButton);
+
+      tagFilterChips.appendChild(chip);
+    });
+    tagFilterInput.placeholder = selectedTagFilters.length ? '' : 'Filter by tags...';
+    renderTagSuggestions();
+  }
+
+  function saveTagFilters() {
+    safeStorageSet({ tagFilters: selectedTagFilters });
+  }
+
+  function addTagFilter(value) {
+    const tag = resolveTagFilterValue(value);
+    if (!tag) return false;
+    const key = tag.toLowerCase();
+    if (selectedTagFilters.some(item => item.toLowerCase() === key)) {
+      tagFilterInput.value = '';
+      renderTagSuggestions();
+      return false;
+    }
+
+    selectedTagFilters = [...selectedTagFilters, tag];
+    tagFilterInput.value = '';
+    saveTagFilters();
+    renderSelectedTagFilters();
+    renderVideos();
+    tagFilterInput.focus();
+    return true;
+  }
+
+  function removeTagFilter(tag) {
+    const key = getTagFilterKey(tag);
+    selectedTagFilters = selectedTagFilters.filter(item => getTagFilterKey(item) !== key);
+    saveTagFilters();
+    renderSelectedTagFilters();
+    renderVideos();
+    tagFilterInput.focus();
+  }
+
+  function matchesTagFilters(video) {
+    if (selectedTagFilters.length === 0) return true;
+    const videoTagKeys = new Set(getVideoTags(video).map(getTagFilterKey));
+    return selectedTagFilters.every(tag => videoTagKeys.has(getTagFilterKey(tag)));
+  }
+
   async function loadAssetSettings() {
     try {
       const settings = await window.api.getSummarySettings();
@@ -745,7 +961,7 @@
 
   function hasActiveFilters() {
     const hasDateFilter = Number(dateAmount) > 0;
-    return statusFilter !== 'active' || hasDateFilter;
+    return statusFilter !== 'active' || hasDateFilter || selectedTagFilters.length > 0;
   }
 
   function updateSearchClearButton() {
@@ -854,6 +1070,7 @@
     if (existing && tagsEl) existing.replaceWith(tagsEl);
     else if (existing) existing.remove();
     else if (tagsEl) info.appendChild(tagsEl);
+    renderTagSuggestions();
     return true;
   }
 
@@ -1112,7 +1329,9 @@
           tags_updated_at: result.updatedAt
         });
         if (updated) Object.assign(video, updated);
-        updateVideoTagsDisplay(updated || video);
+        renderTagSuggestions();
+        if (selectedTagFilters.length > 0) renderVideos();
+        else updateVideoTagsDisplay(updated || video);
         run.success++;
       } catch {
         run.failed++;
@@ -1285,7 +1504,9 @@
         tags_updated_at: result.updatedAt
       });
       if (updated) Object.assign(video, updated);
-      updateVideoTagsDisplay(updated || video);
+      renderTagSuggestions();
+      if (selectedTagFilters.length > 0) renderVideos();
+      else updateVideoTagsDisplay(updated || video);
       setSyncStatus('Tags generated and saved.', 'success', { persist: false });
     } catch (err) {
       setSyncStatus(`Failed to generate tags: ${err.message || 'unknown error'}`, 'error', { persist: false });
@@ -1625,6 +1846,7 @@
     return allVideos.filter(video => {
       if (!matchesStatusFilter(video)) return false;
       if (!matchesDateFilter(video, activeDateFilter)) return false;
+      if (!matchesTagFilters(video)) return false;
       if (!query) return true;
       const tags = getVideoTags(video);
       return (video.title && video.title.toLowerCase().includes(query)) ||
@@ -2078,6 +2300,7 @@
       selectedMoveVideoIds.clear();
       suppressMoveHoverVideoIds.clear();
       allVideos = await window.api.getPlaylistVideos(currentPlaylistId, 'all', { force });
+      renderTagSuggestions();
       updateCurrentPlaylistCount();
       restorePendingRemovals();
       renderVideos();
@@ -2763,6 +2986,7 @@
     if (res.dateFilterDirection) dateDirection = res.dateFilterDirection;
     if (res.dateFilterAmount) dateAmount = res.dateFilterAmount;
     if (res.dateFilterUnit) dateUnit = res.dateFilterUnit;
+    if (Array.isArray(res.tagFilters)) selectedTagFilters = normalizeSelectedTagFilters(res.tagFilters);
     if (Array.isArray(res.pendingRemovals)) pendingRemovalRecords = res.pendingRemovals;
     if (shouldShowStoredStatus(res.dockedSyncStatus)) {
       setSyncStatus(res.dockedSyncStatus.text, res.dockedSyncStatus.state || '', {
@@ -2782,6 +3006,7 @@
     removeFullyWatchedInput.checked = !!res.removeAfterFullyWatched;
     removeOnSkipInput.checked = !!res.removeOnSkip;
     updateSortOptions();
+    renderSelectedTagFilters();
     updateFilterButtonState();
   }
 
@@ -2838,6 +3063,41 @@
     searchInput.value = '';
     renderVideos();
     searchInput.focus();
+  });
+  tagFilterField.addEventListener('click', () => tagFilterInput.focus());
+  tagFilterInput.addEventListener('input', renderTagSuggestions);
+  tagFilterInput.addEventListener('focus', renderTagSuggestions);
+  tagFilterInput.addEventListener('blur', () => setTimeout(hideTagSuggestions, 120));
+  tagFilterInput.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!tagFilterInput.value.trim()) return;
+      if (getTagSuggestionItems().length === 0) renderTagSuggestions();
+      if (getTagSuggestionItems().length === 0) return;
+
+      event.preventDefault();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      const nextIndex = activeTagSuggestionIndex < 0
+        ? direction > 0 ? 0 : getTagSuggestionItems().length - 1
+        : activeTagSuggestionIndex + direction;
+      setActiveTagSuggestion(nextIndex);
+      return;
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addTagFilter(getActiveTagSuggestionValue() || tagFilterInput.value);
+      return;
+    }
+
+    if (event.key === 'Tab' && tagFilterInput.value.trim()) {
+      event.preventDefault();
+      addTagFilter(getActiveTagSuggestionValue() || tagFilterInput.value);
+      return;
+    }
+
+    if (event.key === 'Backspace' && !tagFilterInput.value && selectedTagFilters.length > 0) {
+      removeTagFilter(selectedTagFilters[selectedTagFilters.length - 1]);
+    }
   });
   syncBtn.addEventListener('click', () => syncCurrentPage());
 
@@ -2950,6 +3210,7 @@
     'dateFilterDirection',
     'dateFilterAmount',
     'dateFilterUnit',
+    'tagFilters',
     'removeAfterFullyWatched',
     'removeOnSkip',
     'pendingRemovals',
