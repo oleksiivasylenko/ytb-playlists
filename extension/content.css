@@ -1255,6 +1255,18 @@
   background: #331f1f;
 }
 
+.yt-playlist-alt-video--collapsing {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(10px);
+  transition:
+    height 0.46s ease,
+    padding 0.46s ease,
+    margin 0.46s ease,
+    opacity 0.29s ease,
+    transform 0.29s ease;
+}
+
 .yt-removal-countdown-overlay {
   position: absolute;
   top: 0;

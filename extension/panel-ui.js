@@ -635,6 +635,43 @@
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  function waitForTransition(element, fallbackMs) {
+    return new Promise(resolve => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        element.removeEventListener('transitionend', onTransitionEnd);
+        resolve();
+      };
+      const onTransitionEnd = event => {
+        if (event.target === element && event.propertyName === 'height') finish();
+      };
+
+      element.addEventListener('transitionend', onTransitionEnd);
+      setTimeout(finish, fallbackMs);
+    });
+  }
+
+  async function collapseVideoElement(videoId) {
+    const item = videoList.querySelector(`.yt-playlist-alt-video[data-video-id="${videoId}"]`);
+    if (!item || item.classList.contains('yt-playlist-alt-video--collapsing')) return;
+
+    item.style.height = `${item.offsetHeight}px`;
+    item.style.overflow = 'hidden';
+    item.style.boxSizing = 'border-box';
+    item.classList.add('yt-playlist-alt-video--collapsing');
+
+    await new Promise(requestAnimationFrame);
+    item.style.height = '0px';
+    item.style.paddingTop = '0px';
+    item.style.paddingBottom = '0px';
+    item.style.marginTop = '0px';
+    item.style.marginBottom = '0px';
+
+    await waitForTransition(item, 560);
+  }
+
   function formatDuration(seconds) {
     if (!seconds || seconds === 0) return '';
     const h = Math.floor(seconds / 3600);
@@ -1969,6 +2006,7 @@
 
     try {
       await window.api.removeVideoFromPlaylist(record.playlistId, videoId);
+      await collapseVideoElement(videoId);
       allVideos = allVideos.filter(v => v.id !== videoId);
       updateCurrentPlaylistCount();
       if (shouldRender) renderVideos();
