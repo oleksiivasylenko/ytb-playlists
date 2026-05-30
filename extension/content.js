@@ -526,7 +526,8 @@
   }
 
   async function cleanupRemovedYoutubeEntries(entries, cleanup, syncContext = null) {
-    if (!cleanup || !cleanup.enabled) return;
+    const removedIds = new Set();
+    if (!cleanup || !cleanup.enabled) return removedIds;
 
     for (const entry of entries) {
       if (syncContext) assertSyncCanContinue(syncContext);
@@ -534,13 +535,14 @@
       if (!cleanup.ids.has(videoId) || cleanup.attempted.has(videoId)) continue;
 
       cleanup.attempted.add(videoId);
-      panelApi.setSyncStatus(`Cleaning YouTube playlist... ${cleanup.removed + cleanup.failed + 1}/${cleanup.ids.size}`, 'busy', {
+      panelApi.setSyncStatus(`Cleaning YouTube playlist... ${cleanup.removed + cleanup.failed + 1}`, 'busy', {
         key: SYNC_CLEANUP_STATUS_KEY
       });
 
       const result = await removeYoutubePlaylistEntry(entry);
       if (result.success) {
         cleanup.removed++;
+        removedIds.add(videoId);
         try {
           await withSyncTimeout(
             window.api.markYoutubeCleanup(cleanup.playlistId, videoId, 'removed'),
@@ -568,6 +570,8 @@
 
       await delay(250);
     }
+
+    return removedIds;
   }
 
   async function sendSyncVideos(runId, videos, seenIds, syncContext = null) {
@@ -595,8 +599,12 @@
   async function collectAndSendSyncVideos(runId, seenIds, cleanup = null, syncContext = null) {
     if (syncContext) assertSyncCanContinue(syncContext);
     const entries = collectLoadedPlaylistEntries();
-    await cleanupRemovedYoutubeEntries(entries, cleanup, syncContext);
-    return sendSyncVideos(runId, entries.map(entry => entry.video), seenIds, syncContext);
+    const removedIds = await cleanupRemovedYoutubeEntries(entries, cleanup, syncContext);
+    const excludeIds = cleanup && cleanup.enabled ? cleanup.ids : removedIds;
+    const syncEntries = excludeIds.size > 0
+      ? entries.filter(entry => !excludeIds.has(entry.video.id))
+      : entries;
+    return sendSyncVideos(runId, syncEntries.map(entry => entry.video), seenIds, syncContext);
   }
 
   async function waitForPlaylistProgress(runId, seenIds, previousHeight, timeoutMs, cleanup = null, syncContext = null) {
@@ -655,17 +663,18 @@
       playlist = started.playlist;
       panel.setCurrentPlaylistId(playlist.id);
 
-      const cleanupVideos = await withSyncTimeout(
-        window.api.getYoutubeCleanupPendingVideos(playlist.id),
+      const cleanupVideos = cleanupYoutube ? await withSyncTimeout(
+        window.api.getYoutubeCleanupCandidateVideos(playlist.id),
         20000,
         'Loading YouTube cleanup state',
         syncContext
-      );
+      ) : [];
       const cleanup = cleanupYoutube && cleanupVideos.length > 0
         ? {
             enabled: true,
             playlistId: playlist.id,
             ids: new Set(cleanupVideos.map(video => video.id)),
+            pendingIds: new Set(cleanupVideos.filter(video => !video.youtube_removed_at).map(video => video.id)),
             attempted: new Set(),
             removed: 0,
             alreadyGone: 0,
@@ -745,7 +754,7 @@
       const summary = finalized.run;
 
       if (cleanup && !shortfallWarning) {
-        const notFoundIds = Array.from(cleanup.ids).filter(id => !cleanup.attempted.has(id));
+        const notFoundIds = Array.from(cleanup.pendingIds).filter(id => !cleanup.attempted.has(id));
         for (const videoId of notFoundIds) {
           try {
             await withSyncTimeout(
@@ -763,7 +772,7 @@
       }
 
       const cleanupNotFoundCount = cleanup
-        ? Math.max(0, cleanup.ids.size - cleanup.attempted.size - cleanup.alreadyGone)
+        ? Math.max(0, Array.from(cleanup.pendingIds).filter(id => !cleanup.attempted.has(id)).length - cleanup.alreadyGone)
         : 0;
       const cleanupSummary = cleanup
         ? ` YouTube cleanup removed ${cleanup.removed}, already gone ${cleanup.alreadyGone}, failed ${cleanup.failed}, not found ${cleanupNotFoundCount}.`

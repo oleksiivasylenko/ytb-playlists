@@ -2957,16 +2957,15 @@
     return toggleBtn;
   }
 
-  function askYoutubeCleanup(removedCount) {
+  function askYoutubeCleanup() {
     return new Promise(resolve => {
-      const noun = removedCount === 1 ? 'video is' : 'videos are';
       const overlay = document.createElement('div');
       overlay.className = 'yt-sync-cleanup-modal';
       overlay.innerHTML = `
         <div class="yt-sync-cleanup-dialog">
           <div class="yt-sync-cleanup-title">Clean YouTube playlist?</div>
           <div class="yt-sync-cleanup-text">
-            ${removedCount} ${noun} marked as removed or moved in this panel and still pending YouTube cleanup. During sync, remove matching videos from the real YouTube playlist when they are found?
+            During sync, remove videos from this YouTube playlist when they are already marked as removed or moved in this panel?
           </div>
           <div class="yt-sync-cleanup-actions">
             <button type="button" data-choice="no">No, sync only</button>
@@ -3123,11 +3122,11 @@
         throw new Error('Current YouTube page does not match the selected playlist URL.');
       }
 
-      const removedVideos = await window.api.getYoutubeCleanupPendingVideos(currentPlaylistId);
+      const cleanupCandidates = await window.api.getYoutubeCleanupCandidateVideos(currentPlaylistId);
       if (syncToken !== syncRequestToken) return;
       const cleanupYoutube = typeof syncOptions.cleanupYoutube === 'boolean'
         ? syncOptions.cleanupYoutube
-        : removedVideos.length > 0 ? await askYoutubeCleanup(removedVideos.length) : false;
+        : cleanupCandidates.length > 0 ? await askYoutubeCleanup() : false;
       if (syncToken !== syncRequestToken) return;
 
       safeStorageSet({ selectedPlaylistId: currentPlaylistId });

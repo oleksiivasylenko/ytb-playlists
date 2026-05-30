@@ -467,6 +467,15 @@ router.get('/playlists/:id/videos/youtube-cleanup-pending', (req, res) => {
   res.json(videos);
 });
 
+router.get('/playlists/:id/videos/youtube-cleanup-candidates', (req, res) => {
+  const videos = getPlaylistVideos({
+    playlistId: req.params.id,
+    whereSql: "AND pv.status IN ('removed_by_user', 'moved_to_playlist')"
+  });
+
+  res.json(videos);
+});
+
 router.get('/summaries', (req, res) => {
   const summaries = db.prepare(`
     WITH generated_summaries AS (

@@ -151,7 +151,7 @@ const api = {
   async deletePlaylist(id) {
     const res = await apiFetch(`${API_BASE}/playlists/${id}`, { method: 'DELETE' });
     const data = await res.json();
-    cacheInvalidate('playlists', 'playlist_counts', 'generated_summaries', `playlist_videos_${id}`, `playlist_missing_${id}`);
+    cacheInvalidate('playlists', 'playlist_counts', 'generated_summaries', `playlist_videos_${id}`, `playlist_missing_${id}`, `playlist_youtube_cleanup_pending_${id}`, `playlist_youtube_cleanup_candidates_${id}`);
     return data;
   },
   async getPlaylistVideos(playlistId, status = 'all', options = {}) {
@@ -183,6 +183,16 @@ const api = {
     cacheSet(key, data);
     return data;
   },
+  async getYoutubeCleanupCandidateVideos(playlistId, options = {}) {
+    const key = `playlist_youtube_cleanup_candidates_${playlistId}`;
+    const force = !!options.force;
+    const cached = cacheGet(key);
+    if (!force && cached) return cached;
+    const res = await apiFetch(`${API_BASE}/playlists/${playlistId}/videos/youtube-cleanup-candidates`);
+    const data = await res.json();
+    cacheSet(key, data);
+    return data;
+  },
   async getGeneratedSummaries(options = {}) {
     const force = !!options.force;
     const cached = cacheGet('generated_summaries');
@@ -199,7 +209,7 @@ const api = {
       body: JSON.stringify({ videoId })
     });
     const data = await res.json();
-    cacheInvalidate('playlists', 'playlist_counts', 'generated_summaries', `playlist_videos_${playlistId}`, `playlist_missing_${playlistId}`, `playlist_youtube_cleanup_pending_${playlistId}`, `video_playlists_${videoId}`);
+    cacheInvalidate('playlists', 'playlist_counts', 'generated_summaries', `playlist_videos_${playlistId}`, `playlist_missing_${playlistId}`, `playlist_youtube_cleanup_pending_${playlistId}`, `playlist_youtube_cleanup_candidates_${playlistId}`, `video_playlists_${videoId}`);
     return data;
   },
   async removeVideoFromPlaylist(playlistId, videoId) {
@@ -208,7 +218,7 @@ const api = {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to remove video from playlist');
-    cacheInvalidate('playlists', 'playlist_counts', 'generated_summaries', `playlist_videos_${playlistId}`, `playlist_missing_${playlistId}`, `playlist_youtube_cleanup_pending_${playlistId}`, `video_playlists_${videoId}`);
+    cacheInvalidate('playlists', 'playlist_counts', 'generated_summaries', `playlist_videos_${playlistId}`, `playlist_missing_${playlistId}`, `playlist_youtube_cleanup_pending_${playlistId}`, `playlist_youtube_cleanup_candidates_${playlistId}`, `video_playlists_${videoId}`);
     return data;
   },
   async restoreVideoInPlaylist(playlistId, videoId) {
@@ -217,7 +227,7 @@ const api = {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to restore video');
-    cacheInvalidate('playlists', 'playlist_counts', 'generated_summaries', `playlist_videos_${playlistId}`, `playlist_missing_${playlistId}`, `playlist_youtube_cleanup_pending_${playlistId}`, `video_playlists_${videoId}`);
+    cacheInvalidate('playlists', 'playlist_counts', 'generated_summaries', `playlist_videos_${playlistId}`, `playlist_missing_${playlistId}`, `playlist_youtube_cleanup_pending_${playlistId}`, `playlist_youtube_cleanup_candidates_${playlistId}`, `video_playlists_${videoId}`);
     return data;
   },
   async moveVideosToPlaylist(sourcePlaylistId, targetPlaylistId, videoIds) {
@@ -237,7 +247,9 @@ const api = {
       `playlist_missing_${sourcePlaylistId}`,
       `playlist_missing_${targetPlaylistId}`,
       `playlist_youtube_cleanup_pending_${sourcePlaylistId}`,
-      `playlist_youtube_cleanup_pending_${targetPlaylistId}`
+      `playlist_youtube_cleanup_pending_${targetPlaylistId}`,
+      `playlist_youtube_cleanup_candidates_${sourcePlaylistId}`,
+      `playlist_youtube_cleanup_candidates_${targetPlaylistId}`
     );
     ids.forEach(videoId => cacheInvalidate(`video_playlists_${videoId}`));
     cacheInvalidate('generated_summaries');
@@ -258,6 +270,7 @@ const api = {
       `playlist_videos_${playlistId}`,
       `playlist_missing_${playlistId}`,
       `playlist_youtube_cleanup_pending_${playlistId}`,
+      `playlist_youtube_cleanup_candidates_${playlistId}`,
       `video_playlists_${videoId}`
     );
     return data;
@@ -406,7 +419,7 @@ const api = {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to finalize sync');
-    if (playlistId) cacheInvalidate(`playlist_videos_${playlistId}`, `playlist_missing_${playlistId}`, `playlist_youtube_cleanup_pending_${playlistId}`);
+    if (playlistId) cacheInvalidate(`playlist_videos_${playlistId}`, `playlist_missing_${playlistId}`, `playlist_youtube_cleanup_pending_${playlistId}`, `playlist_youtube_cleanup_candidates_${playlistId}`);
     cacheInvalidate('playlists', 'playlist_counts');
     return data;
   },
