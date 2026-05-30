@@ -1410,6 +1410,7 @@
     const isTranscript = type === 'transcript';
     const activeSummaryMode = summaryMode === 'html' ? 'html' : 'plain';
     const ready = isTranscript ? hasTranscript(video) : hasSummary(video);
+    if (!ready) return;
     const emptyText = isTranscript && isTranscriptUnavailable(video)
       ? 'Transcript is unavailable for this video. Click T to try fetching it again.'
       : undefined;
@@ -2714,7 +2715,7 @@
     transcriptBtn.setAttribute('aria-label', transcriptBtn.title);
     transcriptBtn.innerHTML = transcriptLoading ? '<span class="yt-transcript-spinner"></span>' : 'T';
     transcriptBtn.onclick = event => handleTranscriptClick(event, video);
-    if (!pendingRecord) {
+    if (!pendingRecord && transcriptReady) {
       transcriptBtn.addEventListener('mouseenter', () => showPreview(transcriptBtn, video, 'transcript'));
       transcriptBtn.addEventListener('mouseleave', scheduleHidePreview);
     }
@@ -2736,7 +2737,7 @@
     summaryBtn.setAttribute('aria-label', summaryBtn.title);
     summaryBtn.innerHTML = summaryLoading ? '<span class="yt-transcript-spinner"></span>' : 'S';
     summaryBtn.onclick = event => handleSummaryClick(event, video);
-    if (!pendingRecord && !summaryBlocked) {
+    if (!pendingRecord && summaryReady) {
       summaryBtn.addEventListener('mouseenter', () => showPreview(summaryBtn, video, 'summary'));
       summaryBtn.addEventListener('mouseleave', scheduleHidePreview);
     }

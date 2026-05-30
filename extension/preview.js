@@ -82,8 +82,13 @@
       const el = ensurePopup();
       const rect = anchor.getBoundingClientRect();
       const width = Math.min(options.maxWidth || 520, Math.max(options.minWidth || 300, window.innerWidth - 24));
-      const left = Math.min(window.innerWidth - width - 10, Math.max(10, rect.left));
-      const top = Math.min(window.innerHeight - 220, Math.max(10, rect.bottom + 8));
+      const isDocumentPosition = options.positionMode === 'document';
+      const viewportLeft = Math.min(window.innerWidth - width - 10, Math.max(10, rect.left));
+      const left = isDocumentPosition ? viewportLeft + window.scrollX : viewportLeft;
+      const top = isDocumentPosition
+        ? Math.max(10, rect.bottom + 8) + window.scrollY
+        : Math.min(window.innerHeight - 220, Math.max(10, rect.bottom + 8));
+      el.style.position = isDocumentPosition ? 'absolute' : 'fixed';
       el.style.width = `${width}px`;
       el.style.left = `${left}px`;
       el.style.top = `${top}px`;

@@ -17,7 +17,7 @@
   let watchControlsEventsController = null;
   const watchControlsRetryIds = new Set();
   let panelApi = null;
-  const ytbPreview = window.ytbPreview.create({ id: 'ytb-actions-preview', maxWidth: 520, minWidth: 300 });
+  const ytbPreview = window.ytbPreview.create({ id: 'ytb-actions-preview', maxWidth: 520, minWidth: 300, positionMode: 'document' });
   const SYNC_PROGRESS_STATUS_KEY = 'playlist-sync-progress';
   const SYNC_CLEANUP_STATUS_KEY = 'playlist-sync-cleanup-progress';
 
@@ -726,6 +726,8 @@
   let quickSaveInitPromise = null;
   let watchStateRefreshPromise = null;
   let lastWatchStateRefreshAt = 0;
+  const watchTranscriptLoads = new Set();
+  const watchSummaryLoads = new Set();
   const WATCH_STATE_REFRESH_INTERVAL = 5000;
 
   function withWatchTimeout(promise, ms, label) {
@@ -797,12 +799,13 @@
     return ungrouped;
   }
 
-  function setYtbActionButtonState(button, ready, busy = false, disabled = false) {
+  function setYtbActionButtonState(button, ready, busy = false, disabled = false, label = '') {
     button.classList.toggle('ytb-action-btn--ready', !!ready);
     button.classList.toggle('ytb-action-btn--missing', !ready);
     button.classList.toggle('ytb-action-btn--busy', !!busy);
     button.disabled = !!disabled;
     if (busy) button.innerHTML = '<span class="ytb-action-spinner"></span>';
+    else if (label) button.textContent = label;
   }
 
   async function getActiveSummaryMode() {
@@ -839,20 +842,25 @@
         withWatchTimeout(window.api.getSummaryStatus(videoId, { force: true }), 8000, 'getSummaryStatus'),
         withWatchTimeout(getActiveSummaryMode(), 8000, 'getActiveSummaryMode')
       ]);
-      setYtbActionButtonState(transcriptBtn, !!transcriptStatus.hasTranscript);
-      transcriptBtn.title = transcriptStatus.hasTranscript
+      const transcriptBusy = watchTranscriptLoads.has(videoId);
+      const summaryBusy = watchSummaryLoads.has(videoId);
+
+      setYtbActionButtonState(transcriptBtn, !!transcriptStatus.hasTranscript, transcriptBusy, false, 'T');
+      transcriptBtn.title = transcriptBusy
+        ? 'Fetching transcript'
+        : transcriptStatus.hasTranscript
         ? 'Transcript ready'
         : transcriptStatus.transcriptUnavailable ? 'Transcript unavailable' : 'Fetch transcript';
       const hasSummary = summaryMode === 'html' ? !!summaryStatus.hasHtmlSummary : !!summaryStatus.hasSummary;
       const summaryBlocked = !transcriptStatus.hasTranscript;
-      setYtbActionButtonState(summaryBtn, hasSummary, false, summaryBlocked);
-      summaryBtn.title = summaryBlocked
+      setYtbActionButtonState(summaryBtn, hasSummary, summaryBusy, summaryBlocked, 'S');
+      summaryBtn.title = summaryBusy
+        ? `Generating ${summaryMode === 'html' ? 'HTML summary' : 'summary'}`
+        : summaryBlocked
         ? 'Fetch transcript first'
         : hasSummary
         ? `${summaryMode === 'html' ? 'HTML summary' : 'Summary'} ready`
         : `Generate ${summaryMode === 'html' ? 'HTML summary' : 'summary'}`;
-      transcriptBtn.textContent = 'T';
-      summaryBtn.textContent = 'S';
     } catch (error) {
       logContentError('YTB actions: failed to update state', error);
     }
@@ -865,6 +873,7 @@
 
   async function showYtbPreview(anchor, type) {
     if (anchor.disabled) return;
+    if (!anchor.classList.contains('ytb-action-btn--ready')) return;
 
     const videoId = getVideoIdFromUrl();
     if (!videoId) return;
@@ -911,9 +920,10 @@
 
   async function handleYtbTranscriptClick(button) {
     const videoId = getVideoIdFromUrl();
-    if (!videoId || button.classList.contains('ytb-action-btn--busy')) return;
+    if (!videoId || watchTranscriptLoads.has(videoId) || button.classList.contains('ytb-action-btn--busy')) return;
 
-    setYtbActionButtonState(button, button.classList.contains('ytb-action-btn--ready'), true);
+    watchTranscriptLoads.add(videoId);
+    setYtbActionButtonState(button, button.classList.contains('ytb-action-btn--ready'), true, false, 'T');
 
     try {
       await ensureCurrentVideoStored(videoId);
@@ -929,14 +939,18 @@
       logContentError('YTB transcript action failed', error);
       button.textContent = '!';
       setTimeout(updateYtbActionButtonsState, 1200);
+    } finally {
+      watchTranscriptLoads.delete(videoId);
+      updateYtbActionButtonsState();
     }
   }
 
   async function handleYtbSummaryClick(button) {
     const videoId = getVideoIdFromUrl();
-    if (!videoId || button.disabled || button.classList.contains('ytb-action-btn--busy')) return;
+    if (!videoId || watchSummaryLoads.has(videoId) || button.disabled || button.classList.contains('ytb-action-btn--busy')) return;
 
-    setYtbActionButtonState(button, button.classList.contains('ytb-action-btn--ready'), true);
+    watchSummaryLoads.add(videoId);
+    setYtbActionButtonState(button, button.classList.contains('ytb-action-btn--ready'), true, false, 'S');
 
     try {
       await ensureCurrentVideoStored(videoId);
@@ -959,6 +973,9 @@
       logContentError('YTB summary action failed', error);
       button.textContent = '!';
       setTimeout(updateYtbActionButtonsState, 1200);
+    } finally {
+      watchSummaryLoads.delete(videoId);
+      updateYtbActionButtonsState();
     }
   }
 
