@@ -71,7 +71,7 @@ The server runs at `http://localhost:3001`, and the extension talks to it throug
    ```env
    PORT=3001
    FETCHTRANSCRIPT_API_KEY=yt_your_api_key
-   FETCHTRANSCRIPT_LANGUAGE=en
+   FETCHTRANSCRIPT_LANGUAGES=en,uk,ru
    OPENROUTER_API_KEY=sk-or-v1-your_openrouter_key
    ```
 
@@ -110,7 +110,6 @@ npm start
 
 - `PORT` - local API port.
 - `FETCHTRANSCRIPT_API_KEY` - FetchTranscript API key for transcript retrieval.
-- `FETCHTRANSCRIPT_LANGUAGE` - fallback transcript language.
 - `FETCHTRANSCRIPT_LANGUAGES` - optional comma-separated language priority list, for example `en,uk,ru`.
 - `FETCHTRANSCRIPT_BASE_URL` - optional custom FetchTranscript API endpoint.
 - `OPENROUTER_API_KEY` - OpenRouter key for summaries and tags.

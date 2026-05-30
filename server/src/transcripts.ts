@@ -76,10 +76,6 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function getDefaultLanguage() {
-  return process.env.FETCHTRANSCRIPT_LANGUAGE || 'en';
-}
-
 function getFetchTranscriptBaseUrl() {
   return process.env.FETCHTRANSCRIPT_BASE_URL || 'https://api.fetchtranscript.com/v1';
 }
@@ -267,7 +263,8 @@ function getTranscriptLanguagePriority(language?: string) {
   const priority = parseLanguagePriority(settings?.transcript_languages);
   if (priority.length > 0) return priority;
 
-  return parseLanguagePriority(process.env.FETCHTRANSCRIPT_LANGUAGES).concat(getDefaultLanguage()).filter(Boolean);
+  const envPriority = parseLanguagePriority(process.env.FETCHTRANSCRIPT_LANGUAGES);
+  return envPriority.length > 0 ? envPriority : ['en'];
 }
 
 function transcriptErrorMessage(error: unknown) {
