@@ -189,6 +189,9 @@ export function initDb() {
       tag_prompt TEXT,
       preferred_tags TEXT,
       tag_display_limit INTEGER DEFAULT 5,
+      auto_transcript_enabled INTEGER DEFAULT 0,
+      auto_summary_enabled INTEGER DEFAULT 0,
+      auto_tags_enabled INTEGER DEFAULT 0,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -237,6 +240,9 @@ export function initDb() {
   ensureColumn('summary_settings', 'tag_prompt', 'TEXT');
   ensureColumn('summary_settings', 'preferred_tags', 'TEXT');
   ensureColumn('summary_settings', 'tag_display_limit', 'INTEGER DEFAULT 5');
+  ensureColumn('summary_settings', 'auto_transcript_enabled', 'INTEGER DEFAULT 0');
+  ensureColumn('summary_settings', 'auto_summary_enabled', 'INTEGER DEFAULT 0');
+  ensureColumn('summary_settings', 'auto_tags_enabled', 'INTEGER DEFAULT 0');
   ensureColumn('videos', 'transcript_unavailable', 'INTEGER DEFAULT 0');
   ensureColumn('videos', 'transcript_unavailable_at', 'DATETIME');
   ensureColumn('videos', 'transcript_unavailable_reason', 'TEXT');

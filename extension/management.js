@@ -26,6 +26,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const preferredTagsInput = document.getElementById('preferred-tags-input');
   const tagDisplayLimitInput = document.getElementById('tag-display-limit-input');
   const tagPromptInput = document.getElementById('tag-prompt-input');
+  const autoTranscriptToggle = document.getElementById('auto-transcript-toggle');
+  const autoSummaryToggle = document.getElementById('auto-summary-toggle');
+  const autoTagsToggle = document.getElementById('auto-tags-toggle');
   const summarySettingsSave = document.getElementById('summary-settings-save');
   const summarySettingsStatus = document.getElementById('summary-settings-status');
 
@@ -33,6 +36,11 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentPlaylistId = null;
   let metadataRefreshPollTimer = null;
   const refreshMetadataDefaultText = refreshMetadataBtn.textContent;
+  const autoAssetSettings = {
+    transcript: false,
+    summary: false,
+    tags: false
+  };
 
   function storageGet(keys) {
     return new Promise(resolve => chrome.storage.local.get(keys, res => resolve(res || {})));
@@ -49,6 +57,56 @@ document.addEventListener('DOMContentLoaded', () => {
   function setStatus(el, text, state = '') {
     el.textContent = text || '';
     el.className = state ? `${el.dataset.baseClass || el.className || 'status-text'} ${state}` : (el.dataset.baseClass || el.className || 'status-text');
+  }
+
+  function isEnabledSetting(value) {
+    return value === true || value === 1 || value === '1';
+  }
+
+  function applyAutoAssetSettings(settings) {
+    autoAssetSettings.transcript = isEnabledSetting(settings.auto_transcript_enabled ?? settings.autoTranscriptEnabled ?? settings.transcript);
+    autoAssetSettings.summary = isEnabledSetting(settings.auto_summary_enabled ?? settings.autoSummaryEnabled ?? settings.summary);
+    autoAssetSettings.tags = isEnabledSetting(settings.auto_tags_enabled ?? settings.autoTagsEnabled ?? settings.tags);
+
+    autoTranscriptToggle.classList.toggle('active', autoAssetSettings.transcript);
+    autoSummaryToggle.classList.toggle('active', autoAssetSettings.summary);
+    autoTagsToggle.classList.toggle('active', autoAssetSettings.tags);
+
+    autoTranscriptToggle.title = autoAssetSettings.transcript ? 'Auto transcript is enabled for new videos' : 'Auto transcript is disabled for new videos';
+    autoSummaryToggle.title = autoAssetSettings.summary ? 'Auto summary is enabled for new videos' : 'Auto summary is disabled for new videos';
+    autoTagsToggle.title = autoAssetSettings.tags ? 'Auto tags are enabled for new videos' : 'Auto tags are disabled for new videos';
+
+    autoTranscriptToggle.setAttribute('aria-pressed', String(autoAssetSettings.transcript));
+    autoSummaryToggle.setAttribute('aria-pressed', String(autoAssetSettings.summary));
+    autoTagsToggle.setAttribute('aria-pressed', String(autoAssetSettings.tags));
+  }
+
+  function buildSummarySettingsPayload(overrides = {}) {
+    return {
+      model: summaryModelInput.value.trim(),
+      language: summaryLanguageInput.value.trim(),
+      transcriptLanguages: transcriptLanguagesInput.value.trim(),
+      summaryMode: summaryModeSelect.value,
+      prompt: summaryPromptInput.value.trim(),
+      htmlModel: summaryHtmlModelInput.value.trim(),
+      htmlPrompt: summaryHtmlPromptInput.value.trim(),
+      preferredTags: preferredTagsInput.value.trim(),
+      tagDisplayLimit: Number(tagDisplayLimitInput.value) || 5,
+      tagPrompt: tagPromptInput.value.trim(),
+      autoTranscriptEnabled: autoAssetSettings.transcript,
+      autoSummaryEnabled: autoAssetSettings.summary,
+      autoTagsEnabled: autoAssetSettings.tags,
+      ...overrides
+    };
+  }
+
+  function buildAutoSettingsPayload(overrides = {}) {
+    return {
+      autoTranscriptEnabled: autoAssetSettings.transcript,
+      autoSummaryEnabled: autoAssetSettings.summary,
+      autoTagsEnabled: autoAssetSettings.tags,
+      ...overrides
+    };
   }
 
   function clearMetadataRefreshPoll() {
@@ -206,6 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
       preferredTagsInput.value = settings.preferred_tags || settings.preferredTags || '';
       tagDisplayLimitInput.value = settings.tag_display_limit || settings.tagDisplayLimit || 5;
       tagPromptInput.value = settings.tag_prompt || settings.tagPrompt || '';
+      applyAutoAssetSettings(settings);
       setStatus(summarySettingsStatus, '');
     } catch (err) {
       setStatus(summarySettingsStatus, err.message || 'Failed to load summary settings.', 'error');
@@ -317,23 +376,54 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  async function saveAutoAssetSettings(overrides, previousSettings) {
+    autoTranscriptToggle.disabled = true;
+    autoSummaryToggle.disabled = true;
+    autoTagsToggle.disabled = true;
+    setStatus(summarySettingsStatus, 'Saving automation...');
+
+    try {
+      const settings = await window.api.updateSummarySettings(buildAutoSettingsPayload(overrides));
+      applyAutoAssetSettings(settings);
+      setStatus(summarySettingsStatus, 'Automation saved.', 'success');
+    } catch (err) {
+      setStatus(summarySettingsStatus, err.message || 'Failed to save automation.', 'error');
+      if (previousSettings) applyAutoAssetSettings(previousSettings);
+    } finally {
+      autoTranscriptToggle.disabled = false;
+      autoSummaryToggle.disabled = false;
+      autoTagsToggle.disabled = false;
+    }
+  }
+
+  autoTranscriptToggle.addEventListener('click', () => {
+    const previous = { ...autoAssetSettings };
+    const next = !autoAssetSettings.transcript;
+    applyAutoAssetSettings({ ...autoAssetSettings, autoTranscriptEnabled: next });
+    saveAutoAssetSettings({ autoTranscriptEnabled: next }, previous);
+  });
+
+  autoSummaryToggle.addEventListener('click', () => {
+    const previous = { ...autoAssetSettings };
+    const next = !autoAssetSettings.summary;
+    applyAutoAssetSettings({ ...autoAssetSettings, autoSummaryEnabled: next });
+    saveAutoAssetSettings({ autoSummaryEnabled: next }, previous);
+  });
+
+  autoTagsToggle.addEventListener('click', () => {
+    const previous = { ...autoAssetSettings };
+    const next = !autoAssetSettings.tags;
+    applyAutoAssetSettings({ ...autoAssetSettings, autoTagsEnabled: next });
+    saveAutoAssetSettings({ autoTagsEnabled: next }, previous);
+  });
+
   summarySettingsSave.addEventListener('click', async () => {
     summarySettingsSave.disabled = true;
     setStatus(summarySettingsStatus, 'Saving...');
 
     try {
-      await window.api.updateSummarySettings({
-        model: summaryModelInput.value.trim(),
-        language: summaryLanguageInput.value.trim(),
-        transcriptLanguages: transcriptLanguagesInput.value.trim(),
-        summaryMode: summaryModeSelect.value,
-        prompt: summaryPromptInput.value.trim(),
-        htmlModel: summaryHtmlModelInput.value.trim(),
-        htmlPrompt: summaryHtmlPromptInput.value.trim(),
-        preferredTags: preferredTagsInput.value.trim(),
-        tagDisplayLimit: Number(tagDisplayLimitInput.value) || 5,
-        tagPrompt: tagPromptInput.value.trim()
-      });
+      const settings = await window.api.updateSummarySettings(buildSummarySettingsPayload());
+      applyAutoAssetSettings(settings);
       setStatus(summarySettingsStatus, 'Saved.', 'success');
     } catch (err) {
       setStatus(summarySettingsStatus, err.message || 'Failed to save settings.', 'error');

@@ -15,6 +15,9 @@ export type SummarySettings = {
   tag_prompt: string;
   preferred_tags: string;
   tag_display_limit: number;
+  auto_transcript_enabled: number;
+  auto_summary_enabled: number;
+  auto_tags_enabled: number;
   updated_at: string;
 };
 
@@ -97,6 +100,9 @@ export function updateSummarySettings(input: Partial<{
   tagPrompt: string;
   preferredTags: string;
   tagDisplayLimit: number;
+  autoTranscriptEnabled: boolean;
+  autoSummaryEnabled: boolean;
+  autoTagsEnabled: boolean;
 }>) {
   const current = getSummarySettings();
   const model = typeof input.model === 'string' && input.model.trim()
@@ -128,11 +134,21 @@ export function updateSummarySettings(input: Partial<{
   const tagDisplayLimit = Number.isInteger(tagDisplayLimitValue) && tagDisplayLimitValue > 0
     ? Math.min(tagDisplayLimitValue, 50)
     : current.tag_display_limit || 5;
+  const autoTranscriptEnabled = typeof input.autoTranscriptEnabled === 'boolean'
+    ? (input.autoTranscriptEnabled ? 1 : 0)
+    : current.auto_transcript_enabled || 0;
+  const autoSummaryEnabled = typeof input.autoSummaryEnabled === 'boolean'
+    ? (input.autoSummaryEnabled ? 1 : 0)
+    : current.auto_summary_enabled || 0;
+  const autoTagsEnabled = typeof input.autoTagsEnabled === 'boolean'
+    ? (input.autoTagsEnabled ? 1 : 0)
+    : current.auto_tags_enabled || 0;
 
   db.prepare(`
     UPDATE summary_settings
     SET model = ?, language = ?, prompt = ?, html_model = ?, html_prompt = ?, summary_mode = ?,
-        transcript_languages = ?, tag_prompt = ?, preferred_tags = ?, tag_display_limit = ?, updated_at = ?
+        transcript_languages = ?, tag_prompt = ?, preferred_tags = ?, tag_display_limit = ?,
+        auto_transcript_enabled = ?, auto_summary_enabled = ?, auto_tags_enabled = ?, updated_at = ?
     WHERE id = 1
   `).run(
     model,
@@ -145,6 +161,9 @@ export function updateSummarySettings(input: Partial<{
     tagPrompt,
     preferredTags,
     tagDisplayLimit,
+    autoTranscriptEnabled,
+    autoSummaryEnabled,
+    autoTagsEnabled,
     nowIso()
   );
 

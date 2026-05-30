@@ -21,6 +21,9 @@ const languageRegex = /^[a-z]{2,3}(?:-[A-Za-z0-9]+)?$/;
 const metadataRefreshQueue: string[] = [];
 const queuedMetadataRefreshIds = new Set<string>();
 let metadataRefreshRunning = false;
+const autoAssetQueue: string[] = [];
+const queuedAutoAssetIds = new Set<string>();
+let autoAssetRunning = false;
 const nonActiveStatuses = [
   'removed_from_source',
   'unavailable_on_youtube',
@@ -204,6 +207,57 @@ function refreshVideoMetadataInBackground(videoIds: string[]) {
     .finally(() => {
       metadataRefreshRunning = false;
       if (metadataRefreshQueue.length > 0) refreshVideoMetadataInBackground([]);
+    });
+}
+
+function enqueueAutoAssetsForVideos(videoIds: string[]) {
+  const settings = getSummarySettings();
+  const shouldRun = !!settings.auto_transcript_enabled
+    || !!settings.auto_summary_enabled
+    || !!settings.auto_tags_enabled;
+  if (!shouldRun && autoAssetQueue.length === 0) return;
+
+  for (const videoId of videoIds) {
+    if (!videoId || queuedAutoAssetIds.has(videoId)) continue;
+    queuedAutoAssetIds.add(videoId);
+    autoAssetQueue.push(videoId);
+  }
+
+  if (autoAssetQueue.length === 0 || autoAssetRunning || !shouldRun) return;
+  autoAssetRunning = true;
+
+  (async () => {
+    while (autoAssetQueue.length > 0) {
+      const videoId = autoAssetQueue.shift();
+      if (!videoId) continue;
+
+      try {
+        const currentSettings = getSummarySettings();
+        const needsTranscript = !!currentSettings.auto_transcript_enabled
+          || !!currentSettings.auto_summary_enabled
+          || !!currentSettings.auto_tags_enabled;
+        if (!needsTranscript) continue;
+
+        await ensureTranscript(videoId);
+
+        if (currentSettings.auto_summary_enabled) {
+          await ensureSummary(videoId, normalizeSummaryMode(currentSettings.summary_mode));
+        }
+
+        if (currentSettings.auto_tags_enabled) {
+          await ensureTags(videoId);
+        }
+      } catch (error) {
+        console.warn(`Auto assets skipped ${videoId}:`, error);
+      } finally {
+        queuedAutoAssetIds.delete(videoId);
+      }
+    }
+  })()
+    .catch((error) => console.error('Auto asset queue failed:', error))
+    .finally(() => {
+      autoAssetRunning = false;
+      if (autoAssetQueue.length > 0) enqueueAutoAssetsForVideos([]);
     });
 }
 
@@ -444,6 +498,7 @@ router.post('/playlists/:id/videos', async (req, res) => {
   if (videoNeedsMetadataRefresh(video)) {
     refreshVideoMetadataInBackground([videoId]);
   }
+  enqueueAutoAssetsForVideos([videoId]);
 
   res.json({ success: true, video });
 });
@@ -729,6 +784,7 @@ router.post('/sync/:runId/batch', (req, res) => {
 
   tx();
   refreshVideoMetadataInBackground(metadataRefreshVideoIds);
+  enqueueAutoAssetsForVideos(metadataRefreshVideoIds);
   res.json({ success: true, ...metrics });
 });
 
@@ -866,7 +922,10 @@ router.put('/summary-settings', (req, res) => {
     transcriptLanguages: req.body.transcriptLanguages,
     tagPrompt: req.body.tagPrompt,
     preferredTags: req.body.preferredTags,
-    tagDisplayLimit: req.body.tagDisplayLimit
+    tagDisplayLimit: req.body.tagDisplayLimit,
+    autoTranscriptEnabled: req.body.autoTranscriptEnabled,
+    autoSummaryEnabled: req.body.autoSummaryEnabled,
+    autoTagsEnabled: req.body.autoTagsEnabled
   }));
 });
 
