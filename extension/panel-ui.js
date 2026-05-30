@@ -765,9 +765,9 @@
     return normalizeTagFilterValue(tag).toLowerCase();
   }
 
-  function getUniqueVideoTags() {
+  function getUniqueVideoTags(videos = allVideos) {
     const tagsByKey = new Map();
-    allVideos.forEach(video => {
+    videos.forEach(video => {
       getVideoTags(video).forEach(tag => {
         const value = normalizeTagFilterValue(tag);
         const key = value.toLowerCase();
@@ -776,6 +776,18 @@
     });
 
     return Array.from(tagsByKey.values()).sort((a, b) => a.localeCompare(b));
+  }
+
+  function getTagSuggestionVideos() {
+    const activeDateFilter = buildDateFilter();
+    const query = searchInput.value.trim().toLowerCase();
+    return allVideos.filter(video => {
+      if (!matchesStatusFilter(video)) return false;
+      if (!matchesDateFilter(video, activeDateFilter)) return false;
+      if (!matchesTagFilters(video)) return false;
+      if (!query) return true;
+      return matchesSearchQuery(video, query);
+    });
   }
 
   function normalizeSelectedTagFilters(tags) {
@@ -795,7 +807,7 @@
     const normalized = normalizeTagFilterValue(value);
     if (!normalized) return '';
     const key = normalized.toLowerCase();
-    return getUniqueVideoTags().find(tag => tag.toLowerCase() === key) || normalized;
+    return getUniqueVideoTags(getTagSuggestionVideos()).find(tag => tag.toLowerCase() === key) || normalized;
   }
 
   function appendHighlightedTagText(element, tag, query) {
@@ -862,7 +874,7 @@
       return;
     }
 
-    const suggestions = getUniqueVideoTags()
+    const suggestions = getUniqueVideoTags(getTagSuggestionVideos())
       .filter(tag => !selectedKeys.has(tag.toLowerCase()))
       .filter(tag => tag.toLowerCase().includes(queryKey))
       .slice(0, 80);
@@ -1840,6 +1852,13 @@
     return filter.direction === 'older' ? videoTime < cutoffTime : videoTime >= cutoffTime;
   }
 
+  function matchesSearchQuery(video, query) {
+    const tags = getVideoTags(video);
+    return (video.title && video.title.toLowerCase().includes(query)) ||
+      (video.author && video.author.toLowerCase().includes(query)) ||
+      tags.some(tag => tag.toLowerCase().includes(query));
+  }
+
   function getFilteredVideos() {
     const query = searchInput.value.trim().toLowerCase();
     const activeDateFilter = buildDateFilter();
@@ -1848,10 +1867,7 @@
       if (!matchesDateFilter(video, activeDateFilter)) return false;
       if (!matchesTagFilters(video)) return false;
       if (!query) return true;
-      const tags = getVideoTags(video);
-      return (video.title && video.title.toLowerCase().includes(query)) ||
-        (video.author && video.author.toLowerCase().includes(query)) ||
-        tags.some(tag => tag.toLowerCase().includes(query));
+      return matchesSearchQuery(video, query);
     });
   }
 
@@ -3058,10 +3074,14 @@
     await loadVideos();
   });
 
-  searchInput.addEventListener('input', renderVideos);
+  searchInput.addEventListener('input', () => {
+    renderVideos();
+    renderTagSuggestions();
+  });
   searchClearBtn.addEventListener('click', () => {
     searchInput.value = '';
     renderVideos();
+    renderTagSuggestions();
     searchInput.focus();
   });
   tagFilterField.addEventListener('click', () => tagFilterInput.focus());
@@ -3125,6 +3145,7 @@
     safeStorageSet({ statusFilter, showUnavailableOnly: false });
     updateFilterButtonState();
     renderVideos();
+    renderTagSuggestions();
   });
 
   dateFilterField.addEventListener('change', () => {
@@ -3132,6 +3153,7 @@
     safeStorageSet({ dateFilterField: dateField });
     updateFilterButtonState();
     renderVideos();
+    renderTagSuggestions();
   });
 
   dateFilterDirection.addEventListener('change', () => {
@@ -3139,6 +3161,7 @@
     safeStorageSet({ dateFilterDirection: dateDirection });
     updateFilterButtonState();
     renderVideos();
+    renderTagSuggestions();
   });
 
   dateFilterAmount.addEventListener('input', () => {
@@ -3146,6 +3169,7 @@
     safeStorageSet({ dateFilterAmount: dateAmount });
     updateFilterButtonState();
     renderVideos();
+    renderTagSuggestions();
   });
 
   dateFilterUnit.addEventListener('change', () => {
@@ -3153,6 +3177,7 @@
     safeStorageSet({ dateFilterUnit: dateUnit });
     updateFilterButtonState();
     renderVideos();
+    renderTagSuggestions();
   });
 
   removeFullyWatchedInput.addEventListener('change', () => {
