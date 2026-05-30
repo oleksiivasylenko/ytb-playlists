@@ -63,3 +63,14 @@ document.getElementById('open-manager').addEventListener('click', () => {
     window.close();
   });
 });
+
+document.getElementById('open-summaries').addEventListener('click', async () => {
+  setStatus('');
+
+  try {
+    await chrome.tabs.create({ url: chrome.runtime.getURL('summaries.html') });
+    window.close();
+  } catch (err) {
+    setStatus(err.message || 'Failed to open summaries.');
+  }
+});

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Generated Summaries</title>
+  <link rel="stylesheet" href="summaries.css">
+</head>
+<body>
+  <div class="summaries-app">
+    <header class="summaries-header">
+      <div class="summaries-title">
+        <h1>Generated Summaries</h1>
+        <div id="summary-count" class="summary-count"></div>
+      </div>
+      <div class="summaries-header-actions">
+        <button id="refresh-summaries" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="summaries-controls">
+      <div class="summary-search-row">
+        <input id="summary-text-search" type="text" placeholder="Search title or tags..." autocomplete="off">
+        <select id="summary-status-filter" title="View">
+          <option value="active">Active</option>
+          <option value="all">All statuses</option>
+          <option value="removed_by_user">Removed by you</option>
+          <option value="moved_to_playlist">Moved to another list</option>
+          <option value="removed_from_source">Removed from YouTube playlist</option>
+          <option value="unavailable_on_youtube">Unavailable on YouTube</option>
+          <option value="missing">Missing / unavailable</option>
+          <option value="youtube_cleanup_pending">Pending YouTube cleanup</option>
+        </select>
+      </div>
+
+      <div class="summary-filter-row">
+        <div id="summary-tag-filter" class="tag-filter-field">
+          <div id="summary-tag-filter-chips" class="tag-filter-chips"></div>
+          <input id="summary-tag-filter-input" type="text" placeholder="Filter by tags..." autocomplete="off">
+          <div id="summary-tag-suggestions" class="tag-suggestions" role="listbox"></div>
+        </div>
+
+        <div class="hidden-filter" role="group" aria-label="Hidden summaries">
+          <button type="button" data-hidden-filter="visible" class="active">Visible</button>
+          <button type="button" data-hidden-filter="all">All</button>
+          <button type="button" data-hidden-filter="hidden">Hidden</button>
+        </div>
+      </div>
+    </section>
+
+    <main>
+      <div id="summary-status" class="status-text"></div>
+      <div id="summary-list" class="summary-list"></div>
+    </main>
+  </div>
+
+  <div id="move-modal-root"></div>
+
+  <script src="api.js"></script>
+  <script src="summaries.js"></script>
+</body>
+</html>
