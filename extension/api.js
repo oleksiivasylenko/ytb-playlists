@@ -173,10 +173,11 @@ const api = {
     cacheSet(key, data);
     return data;
   },
-  async getYoutubeCleanupPendingVideos(playlistId) {
+  async getYoutubeCleanupPendingVideos(playlistId, options = {}) {
     const key = `playlist_youtube_cleanup_pending_${playlistId}`;
+    const force = !!options.force;
     const cached = cacheGet(key);
-    if (cached) return cached;
+    if (!force && cached) return cached;
     const res = await apiFetch(`${API_BASE}/playlists/${playlistId}/videos/youtube-cleanup-pending`);
     const data = await res.json();
     cacheSet(key, data);

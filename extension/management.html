@@ -282,6 +282,30 @@
       background: var(--surface2);
     }
 
+    .page-settings {
+      display: grid;
+      gap: 10px;
+    }
+
+    .manager-toggle {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text);
+      cursor: pointer;
+      width: fit-content;
+    }
+
+    .manager-toggle input {
+      width: auto;
+      cursor: pointer;
+    }
+
+    .manager-toggle-text {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
     .auto-asset-label {
       color: var(--text-muted);
       font-size: 12px;
@@ -524,6 +548,17 @@
             <div class="form-actions">
               <button id="save-playlist-source" type="button">Save URL</button>
               <span id="playlist-source-status" class="source-status"></span>
+            </div>
+          </section>
+
+          <section class="section">
+            <h3>YouTube Page</h3>
+            <div class="page-settings">
+              <label class="manager-toggle" for="show-floating-panel-button">
+                <input type="checkbox" id="show-floating-panel-button">
+                <span class="manager-toggle-text">Show floating red menu button</span>
+              </label>
+              <span id="page-settings-status" class="status-text"></span>
             </div>
           </section>
 

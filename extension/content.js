@@ -21,6 +21,7 @@
   const ytbPreview = window.ytbPreview.create({ id: 'ytb-actions-preview', maxWidth: 520, minWidth: 300, positionMode: 'document' });
   const SYNC_PROGRESS_STATUS_KEY = 'playlist-sync-progress';
   const SYNC_CLEANUP_STATUS_KEY = 'playlist-sync-cleanup-progress';
+  const YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY = 'youtubeCleanupReviewPrompt';
   const SYNC_MAX_DURATION_MS = 20 * 60 * 1000;
   const SYNC_IDLE_TIMEOUT_MS = 75 * 1000;
 
@@ -768,6 +769,27 @@
       panel.setSyncStatus(doneMessage, 'success');
       await panel.loadPlaylists(true);
       await panel.loadVideos(true);
+      try {
+        const pendingCleanupVideos = await withSyncTimeout(
+          window.api.getYoutubeCleanupPendingVideos(playlist.id, { force: true }),
+          20000,
+          'Loading YouTube cleanup review state',
+          syncContext
+        );
+        const pendingCleanupList = Array.isArray(pendingCleanupVideos) ? pendingCleanupVideos : [];
+        const missingPendingCleanupVideos = pendingCleanupList.filter(video => video && video.id && !seenIds.has(video.id));
+        if (!shortfallWarning && missingPendingCleanupVideos.length > 0) {
+          safeStorageSet({
+            [YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY]: {
+              playlistId: playlist.id,
+              count: missingPendingCleanupVideos.length,
+              ts: Date.now()
+            }
+          });
+        }
+      } catch (error) {
+        console.warn(`YouTube cleanup review prompt was skipped: ${error.message || error}`);
+      }
       return { success: true, message: doneMessage, state: 'success' };
     } catch (err) {
       const message = err.message || 'Sync failed.';

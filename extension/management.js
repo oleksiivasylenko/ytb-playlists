@@ -31,6 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const autoTagsToggle = document.getElementById('auto-tags-toggle');
   const summarySettingsSave = document.getElementById('summary-settings-save');
   const summarySettingsStatus = document.getElementById('summary-settings-status');
+  const showFloatingPanelButton = document.getElementById('show-floating-panel-button');
+  const pageSettingsStatus = document.getElementById('page-settings-status');
 
   let playlists = [];
   let currentPlaylistId = null;
@@ -169,6 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
     playlistSourceStatus.dataset.baseClass = playlistSourceStatus.className;
     summarySettingsStatus.dataset.baseClass = summarySettingsStatus.className;
     refreshMetadataStatus.dataset.baseClass = refreshMetadataStatus.className;
+    pageSettingsStatus.dataset.baseClass = pageSettingsStatus.className;
   }
 
   function getCurrentPlaylist() {
@@ -269,6 +272,12 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       setStatus(summarySettingsStatus, err.message || 'Failed to load summary settings.', 'error');
     }
+  }
+
+  async function loadPageSettings() {
+    const settings = await storageGet(['showFloatingPanelButton']);
+    showFloatingPanelButton.checked = settings.showFloatingPanelButton !== false;
+    setStatus(pageSettingsStatus, '');
   }
 
   createPlaylistBtn.addEventListener('click', async () => {
@@ -417,6 +426,20 @@ document.addEventListener('DOMContentLoaded', () => {
     saveAutoAssetSettings({ autoTagsEnabled: next }, previous);
   });
 
+  showFloatingPanelButton.addEventListener('change', async () => {
+    showFloatingPanelButton.disabled = true;
+    setStatus(pageSettingsStatus, 'Saving...');
+
+    try {
+      await storageSet({ showFloatingPanelButton: showFloatingPanelButton.checked });
+      setStatus(pageSettingsStatus, 'Saved.', 'success');
+    } catch (err) {
+      setStatus(pageSettingsStatus, err.message || 'Failed to save page settings.', 'error');
+    } finally {
+      showFloatingPanelButton.disabled = false;
+    }
+  });
+
   summarySettingsSave.addEventListener('click', async () => {
     summarySettingsSave.disabled = true;
     setStatus(summarySettingsStatus, 'Saving...');
@@ -436,6 +459,7 @@ document.addEventListener('DOMContentLoaded', () => {
   Promise.all([
     loadPlaylists(),
     loadSummarySettings(),
+    loadPageSettings(),
     pollMetadataRefreshStatus()
   ]).catch(error => {
     setStatus(refreshMetadataStatus, error.message || 'Failed to load manager.', 'error');

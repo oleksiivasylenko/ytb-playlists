@@ -148,6 +148,7 @@
     tagSuggestions = document.getElementById('yt-playlist-alt-tag-suggestions');
   }
   let toggleBtn = null;
+  let showFloatingPanelButton = true;
 
   if (isFloating) {
     panel.style.display = 'none';
@@ -219,6 +220,8 @@
   const AUTO_TRANSCRIPT_STATUS_KEY = 'auto-transcript-progress';
   const AUTO_SUMMARY_STATUS_KEY = 'auto-summary-progress';
   const AUTO_TAG_STATUS_KEY = 'auto-tag-progress';
+  const YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY = 'youtubeCleanupReviewPrompt';
+  let lastYoutubeCleanupReviewPromptKey = '';
 
   function cleanupPanelRuntime() {
     if (autoTranscriptRun) autoTranscriptRun.cancelled = true;
@@ -2870,6 +2873,7 @@
     renderVideos,
     requestVideoRemoval,
     requestVideoRemovals,
+    offerYoutubeCleanupReview,
     ensureFloatingToggle,
     setSyncStatus,
     startSync: syncCurrentPage,
@@ -2914,7 +2918,7 @@
 
   function updateFloatingToggleVisibility() {
     if (!toggleBtn) return;
-    toggleBtn.classList.toggle('yt-playlist-alt-toggle--hidden', isYoutubeFullscreenActive());
+    toggleBtn.classList.toggle('yt-playlist-alt-toggle--hidden', !showFloatingPanelButton || isYoutubeFullscreenActive());
   }
 
   function watchFullscreenToggleVisibility() {
@@ -2985,6 +2989,94 @@
 
       panel.appendChild(overlay);
     });
+  }
+
+  function askYoutubeCleanupReview(pendingCount) {
+    return new Promise(resolve => {
+      const noun = pendingCount === 1 ? 'video is' : 'videos are';
+      const overlay = document.createElement('div');
+      overlay.className = 'yt-sync-cleanup-modal';
+      overlay.innerHTML = `
+        <div class="yt-sync-cleanup-dialog">
+          <div class="yt-sync-cleanup-title">Show pending YouTube cleanup?</div>
+          <div class="yt-sync-cleanup-text">
+            ${pendingCount} ${noun} marked as removed or moved here, but sync did not find them in the YouTube playlist. Show these videos so you can mark them removed?
+          </div>
+          <div class="yt-sync-cleanup-actions">
+            <button type="button" data-choice="no">No</button>
+            <button type="button" data-choice="yes">Show videos</button>
+          </div>
+        </div>
+      `;
+
+      const finish = value => {
+        overlay.remove();
+        resolve(value);
+      };
+
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) finish(false);
+        const button = event.target.closest && event.target.closest('button[data-choice]');
+        if (!button) return;
+        finish(button.dataset.choice === 'yes');
+      });
+
+      panel.appendChild(overlay);
+    });
+  }
+
+  async function showYoutubeCleanupPendingVideos(playlistId = currentPlaylistId) {
+    if (!playlistId) return false;
+
+    if (String(currentPlaylistId || '') !== String(playlistId)) {
+      currentPlaylistId = playlistId;
+      renderPlaylistOptions();
+    }
+
+    statusFilter = 'youtube_cleanup_pending';
+    statusFilterSelect.value = statusFilter;
+    safeStorageSet({
+      selectedPlaylistId: currentPlaylistId,
+      statusFilter,
+      showUnavailableOnly: false
+    });
+    updateFilterButtonState();
+    return loadVideos(true);
+  }
+
+  async function offerYoutubeCleanupReview(prompt = {}) {
+    const playlistId = prompt.playlistId || currentPlaylistId;
+    if (!playlistId || panel.style.display === 'none') return false;
+
+    let pendingCount = Number(prompt.count) || 0;
+    if (pendingCount <= 0) {
+      const pendingVideos = await window.api.getYoutubeCleanupPendingVideos(playlistId, { force: true });
+      pendingCount = Array.isArray(pendingVideos) ? pendingVideos.length : 0;
+    }
+    if (pendingCount <= 0) return false;
+
+    const shouldShow = await askYoutubeCleanupReview(pendingCount);
+    if (!shouldShow) return false;
+
+    await showYoutubeCleanupPendingVideos(playlistId);
+    return true;
+  }
+
+  function getYoutubeCleanupReviewPromptKey(prompt) {
+    if (!prompt || !prompt.playlistId || !prompt.ts) return '';
+    return `${prompt.playlistId}:${prompt.ts}`;
+  }
+
+  async function handleYoutubeCleanupReviewPrompt(prompt) {
+    const key = getYoutubeCleanupReviewPromptKey(prompt);
+    if (!key || key === lastYoutubeCleanupReviewPromptKey || panel.style.display === 'none') return;
+
+    lastYoutubeCleanupReviewPromptKey = key;
+    try {
+      await offerYoutubeCleanupReview(prompt);
+    } catch (err) {
+      setSyncStatus(`Failed to show cleanup list: ${err.message || 'unknown error'}`, 'error');
+    }
   }
 
   async function syncCurrentPage(syncOptions = {}) {
@@ -3113,9 +3205,12 @@
   }
 
   function applyStoredState(res) {
+    showFloatingPanelButton = res.showFloatingPanelButton !== false;
+
     if (isFloating) {
       if (res.panelWidth) panel.style.width = `${res.panelWidth}px`;
       panel.style.display = res.panelOpen ? 'flex' : 'none';
+      updateFloatingToggleVisibility();
     }
     if (res.selectedPlaylistId) currentPlaylistId = res.selectedPlaylistId;
     if (res.sortOption) sortOption = res.sortOption;
@@ -3343,6 +3438,16 @@
     if (changes.pendingRemovals && Array.isArray(changes.pendingRemovals.newValue)) {
       pendingRemovalRecords = changes.pendingRemovals.newValue;
     }
+
+    if (changes[YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY] && changes[YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY].newValue) {
+      handleYoutubeCleanupReviewPrompt(changes[YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY].newValue);
+    }
+
+    if (changes.showFloatingPanelButton) {
+      showFloatingPanelButton = changes.showFloatingPanelButton.newValue !== false;
+      if (showFloatingPanelButton) ensureFloatingToggle();
+      else updateFloatingToggleVisibility();
+    }
   });
 
   const storageKeys = [
@@ -3362,7 +3467,9 @@
     'removeAfterFullyWatched',
     'removeOnSkip',
     'pendingRemovals',
-    'dockedSyncStatus'
+    'dockedSyncStatus',
+    YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY,
+    'showFloatingPanelButton'
   ];
 
   safeStorageGet(storageKeys, res => {
