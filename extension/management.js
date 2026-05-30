@@ -31,6 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let playlists = [];
   let currentPlaylistId = null;
+  let metadataRefreshPollTimer = null;
+  const refreshMetadataDefaultText = refreshMetadataBtn.textContent;
 
   function storageGet(keys) {
     return new Promise(resolve => chrome.storage.local.get(keys, res => resolve(res || {})));
@@ -47,6 +49,62 @@ document.addEventListener('DOMContentLoaded', () => {
   function setStatus(el, text, state = '') {
     el.textContent = text || '';
     el.className = state ? `${el.dataset.baseClass || el.className || 'status-text'} ${state}` : (el.dataset.baseClass || el.className || 'status-text');
+  }
+
+  function clearMetadataRefreshPoll() {
+    if (!metadataRefreshPollTimer) return;
+    clearTimeout(metadataRefreshPollTimer);
+    metadataRefreshPollTimer = null;
+  }
+
+  function getMetadataRefreshProgress(status) {
+    const total = Number(status && status.total) || 0;
+    const processed = Number(status && status.processed) || 0;
+    if (total <= 0) return '0/0';
+    const percent = Math.min(100, Math.round((processed / total) * 100));
+    return `${processed}/${total} (${percent}%)`;
+  }
+
+  function applyMetadataRefreshStatus(status) {
+    const total = Number(status && status.total) || 0;
+    const updated = Number(status && status.updated) || 0;
+    const failed = Number(status && status.failed) || 0;
+    const running = !!(status && status.running);
+    const progress = getMetadataRefreshProgress(status);
+
+    refreshMetadataBtn.disabled = running;
+    refreshMetadataBtn.textContent = running ? `Refreshing ${progress}` : refreshMetadataDefaultText;
+
+    if (running) {
+      setStatus(refreshMetadataStatus, `Refreshing metadata ${progress}. Updated ${updated}, skipped ${failed}.`);
+      return;
+    }
+
+    if (status && status.finishedAt) {
+      if (total === 0) {
+        setStatus(refreshMetadataStatus, status.message || 'No videos need metadata refresh.', 'success');
+        return;
+      }
+
+      const state = failed > 0 ? 'error' : 'success';
+      setStatus(refreshMetadataStatus, `Refresh finished. Updated ${updated}/${total}, skipped ${failed}.`, state);
+    }
+  }
+
+  async function pollMetadataRefreshStatus() {
+    clearMetadataRefreshPoll();
+
+    try {
+      const status = await window.api.getMetadataRefreshStatus();
+      applyMetadataRefreshStatus(status);
+      if (status.running) {
+        metadataRefreshPollTimer = setTimeout(pollMetadataRefreshStatus, 1000);
+      }
+    } catch (err) {
+      refreshMetadataBtn.disabled = false;
+      refreshMetadataBtn.textContent = refreshMetadataDefaultText;
+      setStatus(refreshMetadataStatus, err.message || 'Failed to load metadata refresh status.', 'error');
+    }
   }
 
   function rememberBaseStatusClasses() {
@@ -243,15 +301,18 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   refreshMetadataBtn.addEventListener('click', async () => {
+    clearMetadataRefreshPoll();
     refreshMetadataBtn.disabled = true;
+    refreshMetadataBtn.textContent = 'Queueing...';
     setStatus(refreshMetadataStatus, 'Queueing metadata refresh...');
 
     try {
       const result = await window.api.refreshMetadata();
-      setStatus(refreshMetadataStatus, `${result.total} videos queued. Refresh continues on the server.`, 'success');
+      applyMetadataRefreshStatus(result);
+      if (result.running) pollMetadataRefreshStatus();
     } catch (err) {
+      refreshMetadataBtn.textContent = refreshMetadataDefaultText;
       setStatus(refreshMetadataStatus, err.message || 'Failed to refresh metadata.', 'error');
-    } finally {
       refreshMetadataBtn.disabled = false;
     }
   });
@@ -284,7 +345,8 @@ document.addEventListener('DOMContentLoaded', () => {
   rememberBaseStatusClasses();
   Promise.all([
     loadPlaylists(),
-    loadSummarySettings()
+    loadSummarySettings(),
+    pollMetadataRefreshStatus()
   ]).catch(error => {
     setStatus(refreshMetadataStatus, error.message || 'Failed to load manager.', 'error');
   });

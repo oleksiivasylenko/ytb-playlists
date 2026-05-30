@@ -18,6 +18,9 @@ import {
 const router = Router();
 const videoIdRegex = /^[a-zA-Z0-9_-]{11}$/;
 const languageRegex = /^[a-z]{2,3}(?:-[A-Za-z0-9]+)?$/;
+const metadataRefreshQueue: string[] = [];
+const queuedMetadataRefreshIds = new Set<string>();
+let metadataRefreshRunning = false;
 const nonActiveStatuses = [
   'removed_from_source',
   'unavailable_on_youtube',
@@ -35,6 +38,28 @@ type SnapshotVideo = {
   author?: string;
   duration?: number;
   sortOrder?: number;
+};
+
+type MetadataRefreshStatus = {
+  running: boolean;
+  total: number;
+  processed: number;
+  updated: number;
+  failed: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  message: string;
+};
+
+let metadataRefreshStatus: MetadataRefreshStatus = {
+  running: false,
+  total: 0,
+  processed: 0,
+  updated: 0,
+  failed: 0,
+  startedAt: null,
+  finishedAt: null,
+  message: ''
 };
 
 function nowIso() {
@@ -65,6 +90,16 @@ function metadataIsAvailable(metadata: Pick<VideoMetadata, 'title'>) {
 
 function metadataIsUnavailable(metadata: Pick<VideoMetadata, 'availability'>) {
   return metadata.availability === 'unavailable';
+}
+
+function videoNeedsMetadataRefresh(video: Partial<VideoMetadata> | null | undefined) {
+  if (!video) return true;
+  return !isKnownTitle(video.title)
+    || !video.author
+    || video.author === 'Unknown Author'
+    || !video.duration
+    || !video.published_at
+    || video.availability !== 'available';
 }
 
 function toVideoMetadata(videoId: string, input: Partial<SnapshotVideo> = {}): VideoMetadata {
@@ -114,13 +149,70 @@ function upsertVideo(videoId: string, metadata: VideoMetadata, checkedAt: string
   );
 }
 
+async function refreshVideoMetadata(videoId: string) {
+  const checkedAt = nowIso();
+  const metadata = await fetchVideoMetadata(videoId);
+
+  if (metadataIsAvailable(metadata)) {
+    upsertVideo(videoId, metadata, checkedAt);
+    return 'updated';
+  }
+
+  if (metadataIsUnavailable(metadata)) {
+    markVideoUnavailable(videoId, checkedAt);
+    return 'unavailable';
+  }
+
+  return 'skipped';
+}
+
+function refreshVideoMetadataInBackground(videoIds: string[]) {
+  for (const videoId of videoIds) {
+    if (!videoId || queuedMetadataRefreshIds.has(videoId)) continue;
+    queuedMetadataRefreshIds.add(videoId);
+    metadataRefreshQueue.push(videoId);
+  }
+
+  if (metadataRefreshQueue.length === 0 || metadataRefreshRunning) return;
+  metadataRefreshRunning = true;
+
+  (async () => {
+    let updated = 0;
+    let failed = 0;
+    let total = 0;
+
+    while (metadataRefreshQueue.length > 0) {
+      const videoId = metadataRefreshQueue.shift();
+      if (!videoId) continue;
+      total++;
+
+      try {
+        const result = await refreshVideoMetadata(videoId);
+        if (result === 'skipped') failed++;
+        else updated++;
+      } catch (error) {
+        failed++;
+        console.warn(`Metadata refresh skipped ${videoId}:`, error);
+      } finally {
+        queuedMetadataRefreshIds.delete(videoId);
+      }
+    }
+
+    console.log(`Refreshed metadata for ${updated}/${total} queued videos; skipped ${failed}`);
+  })()
+    .catch((error) => console.error('Background metadata refresh failed:', error))
+    .finally(() => {
+      metadataRefreshRunning = false;
+      if (metadataRefreshQueue.length > 0) refreshVideoMetadataInBackground([]);
+    });
+}
+
 async function ensureFreshVideo(videoId: string) {
   const existing = db.prepare('SELECT * FROM videos WHERE id = ?').get(videoId) as any;
-  if (existing && isKnownTitle(existing.title) && existing.duration) return existing;
+  if (existing && !videoNeedsMetadataRefresh(existing)) return existing;
 
   try {
-    const metadata = await fetchVideoMetadata(videoId);
-    upsertVideo(videoId, metadata, nowIso());
+    await refreshVideoMetadata(videoId);
   } catch (error) {
     if (existing) return existing;
     upsertVideo(videoId, toVideoMetadata(videoId), null);
@@ -349,6 +441,10 @@ router.post('/playlists/:id/videos', async (req, res) => {
       moved_at = NULL
   `).run(req.params.id, videoId, addedAt || null);
 
+  if (videoNeedsMetadataRefresh(video)) {
+    refreshVideoMetadataInBackground([videoId]);
+  }
+
   res.json({ success: true, video });
 });
 
@@ -567,6 +663,8 @@ router.post('/sync/:runId/batch', (req, res) => {
   const metrics = { seen: 0, added: 0, reactivated: 0 };
   const timestamp = nowIso();
 
+  const metadataRefreshVideoIds: string[] = [];
+
   const tx = db.transaction(() => {
     for (const snapshot of seen.values()) {
       const videoId = snapshot.id;
@@ -580,8 +678,13 @@ router.post('/sync/:runId/batch', (req, res) => {
       const metadata = toVideoMetadata(videoId, snapshot);
       upsertVideo(videoId, metadata, null);
 
-      if (!existingLink) metrics.added++;
-      else if (existingLink.status !== 'active' && !isUserControlled) metrics.reactivated++;
+      if (!existingLink) {
+        metrics.added++;
+        metadataRefreshVideoIds.push(videoId);
+      } else if (existingLink.status !== 'active' && !isUserControlled) {
+        metrics.reactivated++;
+        metadataRefreshVideoIds.push(videoId);
+      }
       if (!existingLink || Number(existingLink.last_sync_run_id) !== runId) metrics.seen++;
 
       db.prepare(`
@@ -625,6 +728,7 @@ router.post('/sync/:runId/batch', (req, res) => {
   });
 
   tx();
+  refreshVideoMetadataInBackground(metadataRefreshVideoIds);
   res.json({ success: true, ...metrics });
 });
 
@@ -926,6 +1030,10 @@ router.get('/transcripts/events', (req, res) => {
   addTranscriptEventClient(req, res);
 });
 
+router.get('/videos/refresh-metadata/status', (req, res) => {
+  res.json(metadataRefreshStatus);
+});
+
 router.get('/videos/:id', async (req, res) => {
   const videoId = normalizeVideoId(req.params.id);
   if (!videoId) return res.status(400).json({ error: 'Valid videoId is required' });
@@ -935,6 +1043,13 @@ router.get('/videos/:id', async (req, res) => {
 });
 
 router.post('/videos/refresh-metadata', async (req, res) => {
+  if (metadataRefreshStatus.running) {
+    return res.json({
+      ...metadataRefreshStatus,
+      message: 'Metadata refresh is already running'
+    });
+  }
+
   const videos = db.prepare(`
     SELECT id
     FROM videos
@@ -951,31 +1066,45 @@ router.post('/videos/refresh-metadata', async (req, res) => {
       OR availability != 'available'
   `).all() as any[];
 
-  res.json({ total: videos.length, message: 'Refresh started in background' });
+  metadataRefreshStatus = {
+    running: videos.length > 0,
+    total: videos.length,
+    processed: 0,
+    updated: 0,
+    failed: 0,
+    startedAt: nowIso(),
+    finishedAt: videos.length > 0 ? null : nowIso(),
+    message: videos.length > 0 ? 'Refresh started in background' : 'No videos need metadata refresh'
+  };
+
+  res.json(metadataRefreshStatus);
+
+  if (videos.length === 0) return;
 
   (async () => {
-    let updated = 0;
-    let failed = 0;
     for (const v of videos) {
       try {
-        const checkedAt = nowIso();
-        const metadata = await fetchVideoMetadata(v.id);
-        if (metadataIsAvailable(metadata)) {
-          upsertVideo(v.id, metadata, checkedAt);
-          updated++;
-        } else if (metadataIsUnavailable(metadata)) {
-          markVideoUnavailable(v.id, checkedAt);
-          updated++;
-        } else {
-          failed++;
-        }
+        const result = await refreshVideoMetadata(v.id);
+        if (result === 'skipped') metadataRefreshStatus.failed++;
+        else metadataRefreshStatus.updated++;
       } catch (error) {
-        failed++;
+        metadataRefreshStatus.failed++;
         console.warn(`Refresh metadata skipped ${v.id}:`, error);
+      } finally {
+        metadataRefreshStatus.processed++;
       }
     }
-    console.log(`Refreshed metadata for ${updated}/${videos.length} videos; skipped ${failed}`);
-  })().catch((error) => console.error('Refresh metadata failed:', error));
+
+    metadataRefreshStatus.running = false;
+    metadataRefreshStatus.finishedAt = nowIso();
+    metadataRefreshStatus.message = `Refreshed metadata for ${metadataRefreshStatus.updated}/${videos.length} videos; skipped ${metadataRefreshStatus.failed}`;
+    console.log(metadataRefreshStatus.message);
+  })().catch((error) => {
+    metadataRefreshStatus.running = false;
+    metadataRefreshStatus.finishedAt = nowIso();
+    metadataRefreshStatus.message = error instanceof Error ? error.message : 'Refresh metadata failed';
+    console.error('Refresh metadata failed:', error);
+  });
 });
 
 export default router;

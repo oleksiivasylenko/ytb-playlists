@@ -408,7 +408,15 @@ const api = {
   },
   async refreshMetadata() {
     const res = await apiFetch(`${API_BASE}/videos/refresh-metadata`, { method: 'POST' });
-    return res.json();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to refresh metadata');
+    return data;
+  },
+  async getMetadataRefreshStatus() {
+    const res = await apiFetch(`${API_BASE}/videos/refresh-metadata/status`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load metadata refresh status');
+    return data;
   },
   async getVideoPlaylists(videoId, options = {}) {
     const key = `video_playlists_${videoId}`;
