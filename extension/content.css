@@ -35,12 +35,18 @@
 }
 
 #yt-playlist-alt-header {
-  padding: 12px 16px;
+  padding: 8px 16px;
   border-bottom: 1px solid #333;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   background: #212121;
+}
+
+.yt-playlist-alt-header-main {
+  min-width: 0;
+  flex: 1;
 }
 
 #yt-playlist-alt-header h3 {
@@ -239,6 +245,14 @@
   color: #aaa;
   font-size: 11px;
   line-height: 1.35;
+}
+
+#yt-playlist-alt-header .yt-sync-status {
+  min-height: 14px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .yt-sync-status--busy {
@@ -1317,6 +1331,10 @@
 
 #yt-playlist-alt-toggle:hover {
   background: #cc0000;
+}
+
+#yt-playlist-alt-toggle.yt-playlist-alt-toggle--hidden {
+  display: none;
 }
 
 /* ── Quick-Save Button ──────────────────────────────────────────────────── */

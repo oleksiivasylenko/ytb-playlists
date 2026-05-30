@@ -171,9 +171,10 @@
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  function createSyncStopError(message) {
+  function createSyncStopError(message, options = {}) {
     const error = new Error(message || 'Sync stopped.');
     error.isSyncStop = true;
+    error.shouldFailRun = options.shouldFailRun !== false;
     return error;
   }
 
@@ -203,7 +204,7 @@
     }
 
     if (context.cancelled) {
-      throw createSyncStopError(context.cancelMessage || 'Sync stopped.');
+      throw createSyncStopError(context.cancelMessage || 'Sync stopped.', { shouldFailRun: false });
     }
 
     const now = Date.now();
@@ -770,9 +771,14 @@
       return { success: true, message: doneMessage, state: 'success' };
     } catch (err) {
       const message = err.message || 'Sync failed.';
-      if (run && run.id) {
+      if (run && run.id && (!err.isSyncStop || err.shouldFailRun !== false)) {
         window.api.failSync(run.id, message).catch(() => {});
       }
+      if (err.isSyncStop) {
+        panel.setSyncStatus(message, 'success');
+        return { success: true, message, state: 'success', stopped: true };
+      }
+
       panel.setSyncStatus(message, 'error');
       console.error('Playlist sync failed:', err);
       return { success: false, error: message };

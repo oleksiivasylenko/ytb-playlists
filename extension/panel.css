@@ -24,7 +24,9 @@ body {
 }
 
 #yt-playlist-alt-header {
-  min-height: 48px;
+  min-height: 38px;
+  padding-top: 7px;
+  padding-bottom: 7px;
 }
 
 .yt-playlist-alt-header-actions {
