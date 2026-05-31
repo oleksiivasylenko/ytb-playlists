@@ -21,6 +21,9 @@ const languageRegex = /^[a-z]{2,3}(?:-[A-Za-z0-9]+)?$/;
 const metadataRefreshQueue: string[] = [];
 const queuedMetadataRefreshIds = new Set<string>();
 let metadataRefreshRunning = false;
+const missingAvailabilityQueue: MissingAvailabilityItem[] = [];
+const queuedMissingAvailabilityKeys = new Set<string>();
+let missingAvailabilityRunning = false;
 const autoAssetQueue: string[] = [];
 const queuedAutoAssetIds = new Set<string>();
 let autoAssetRunning = false;
@@ -52,6 +55,12 @@ type MetadataRefreshStatus = {
   startedAt: string | null;
   finishedAt: string | null;
   message: string;
+};
+
+type MissingAvailabilityItem = {
+  runId: number;
+  playlistId: number;
+  videoId: string;
 };
 
 let metadataRefreshStatus: MetadataRefreshStatus = {
@@ -207,6 +216,78 @@ function refreshVideoMetadataInBackground(videoIds: string[]) {
     .finally(() => {
       metadataRefreshRunning = false;
       if (metadataRefreshQueue.length > 0) refreshVideoMetadataInBackground([]);
+    });
+}
+
+function verifyMissingAvailabilityInBackground(runId: number, playlistId: number, videoIds: string[]) {
+  for (const videoId of videoIds) {
+    if (!videoId) continue;
+    const key = `${playlistId}:${videoId}`;
+    if (queuedMissingAvailabilityKeys.has(key)) continue;
+    queuedMissingAvailabilityKeys.add(key);
+    missingAvailabilityQueue.push({ runId, playlistId, videoId });
+  }
+
+  if (missingAvailabilityQueue.length === 0 || missingAvailabilityRunning) return;
+  missingAvailabilityRunning = true;
+
+  (async () => {
+    let checked = 0;
+    let unavailable = 0;
+    let failed = 0;
+
+    while (missingAvailabilityQueue.length > 0) {
+      const item = missingAvailabilityQueue.shift();
+      if (!item) continue;
+      checked++;
+
+      try {
+        const checkedAt = nowIso();
+        const metadata = await fetchVideoMetadata(item.videoId);
+
+        if (metadataIsAvailable(metadata)) {
+          upsertVideo(item.videoId, metadata, checkedAt);
+        } else if (metadataIsUnavailable(metadata)) {
+          markVideoUnavailable(item.videoId, checkedAt);
+          const info = db.prepare(`
+            UPDATE playlist_videos
+            SET status = 'unavailable_on_youtube',
+                unavailable_since = COALESCE(unavailable_since, ?),
+                last_checked_at = ?
+            WHERE playlist_id = ?
+              AND video_id = ?
+              AND status = 'removed_from_source'
+          `).run(checkedAt, checkedAt, item.playlistId, item.videoId);
+
+          if (info.changes > 0) {
+            unavailable += info.changes;
+            db.prepare(`
+              UPDATE sync_runs
+              SET removed_count = CASE
+                    WHEN removed_count >= ? THEN removed_count - ?
+                    ELSE 0
+                  END,
+                  unavailable_count = unavailable_count + ?
+              WHERE id = ?
+            `).run(info.changes, info.changes, info.changes, item.runId);
+          }
+        } else {
+          failed++;
+        }
+      } catch (error) {
+        failed++;
+        console.warn(`Missing availability verification skipped ${item.videoId}:`, error);
+      } finally {
+        queuedMissingAvailabilityKeys.delete(`${item.playlistId}:${item.videoId}`);
+      }
+    }
+
+    console.log(`Verified availability for ${checked} missing videos; unavailable ${unavailable}; skipped ${failed}`);
+  })()
+    .catch((error) => console.error('Missing availability verification failed:', error))
+    .finally(() => {
+      missingAvailabilityRunning = false;
+      if (missingAvailabilityQueue.length > 0) verifyMissingAvailabilityInBackground(runId, playlistId, []);
     });
 }
 
@@ -855,7 +936,7 @@ router.post('/sync/:runId/finalize', async (req, res) => {
   const skipMissingCheck = req.body && req.body.skipMissingCheck === true;
 
   const missing = skipMissingCheck ? [] : db.prepare(`
-    SELECT pv.video_id, v.title, v.thumbnail, v.author, v.duration
+    SELECT pv.video_id, v.availability
     FROM playlist_videos pv
     JOIN videos v ON v.id = pv.video_id
     WHERE pv.playlist_id = ?
@@ -864,45 +945,30 @@ router.post('/sync/:runId/finalize', async (req, res) => {
   `).all(run.playlist_id, runId) as any[];
 
   const checkedAt = nowIso();
-  let removed = 0;
-  let unavailable = 0;
-  let metadataCheckFailed = 0;
+  const unavailable = missing.filter(item => item.availability === 'unavailable').length;
+  const removed = missing.length - unavailable;
+  const verificationIds = missing
+    .filter(item => item.availability !== 'unavailable')
+    .map(item => item.video_id)
+    .filter(Boolean);
 
-  for (const item of missing) {
-    let metadata: VideoMetadata;
-    try {
-      metadata = await fetchVideoMetadata(item.video_id);
-    } catch (error) {
-      metadataCheckFailed++;
-      console.warn(`Metadata check failed for ${item.video_id}:`, error);
-      continue;
-    }
-
-    if (metadataIsAvailable(metadata)) {
-      upsertVideo(item.video_id, metadata, checkedAt);
-      db.prepare(`
-        UPDATE playlist_videos
-        SET status = 'removed_from_source',
-            missing_since = COALESCE(missing_since, ?),
-            unavailable_since = NULL,
-            last_checked_at = ?
-        WHERE playlist_id = ? AND video_id = ?
-      `).run(checkedAt, checkedAt, run.playlist_id, item.video_id);
-      removed++;
-    } else if (metadataIsUnavailable(metadata)) {
-      markVideoUnavailable(item.video_id, checkedAt);
-      db.prepare(`
-        UPDATE playlist_videos
-        SET status = 'unavailable_on_youtube',
-            missing_since = COALESCE(missing_since, ?),
-            unavailable_since = COALESCE(unavailable_since, ?),
-            last_checked_at = ?
-        WHERE playlist_id = ? AND video_id = ?
-      `).run(checkedAt, checkedAt, checkedAt, run.playlist_id, item.video_id);
-      unavailable++;
-    } else {
-      metadataCheckFailed++;
-    }
+  if (missing.length > 0) {
+    db.prepare(`
+      UPDATE playlist_videos
+      SET status = CASE
+            WHEN video_id IN (SELECT id FROM videos WHERE availability = 'unavailable') THEN 'unavailable_on_youtube'
+            ELSE 'removed_from_source'
+          END,
+          missing_since = COALESCE(missing_since, ?),
+          unavailable_since = CASE
+            WHEN video_id IN (SELECT id FROM videos WHERE availability = 'unavailable') THEN COALESCE(unavailable_since, ?)
+            ELSE NULL
+          END,
+          last_checked_at = ?
+      WHERE playlist_id = ?
+        AND status = 'active'
+        AND (last_sync_run_id IS NULL OR last_sync_run_id != ?)
+    `).run(checkedAt, checkedAt, checkedAt, run.playlist_id, runId);
   }
 
   db.prepare(`
@@ -917,14 +983,23 @@ router.post('/sync/:runId/finalize', async (req, res) => {
     checkedAt,
     removed,
     unavailable,
-    metadataCheckFailed > 0 ? `Metadata check failed for ${metadataCheckFailed} missing videos` : null,
+    null,
     runId
   );
 
   db.prepare('UPDATE playlists SET last_synced_at = ? WHERE id = ?').run(checkedAt, run.playlist_id);
+  if (verificationIds.length > 0) {
+    verifyMissingAvailabilityInBackground(runId, run.playlist_id, verificationIds);
+  }
 
   const completedRun = db.prepare('SELECT * FROM sync_runs WHERE id = ?').get(runId);
-  res.json({ success: true, run: completedRun, missingChecked: missing.length, metadataCheckFailed });
+  res.json({
+    success: true,
+    run: completedRun,
+    missingChecked: missing.length,
+    metadataCheckFailed: 0,
+    availabilityVerificationQueued: verificationIds.length
+  });
 });
 
 router.post('/sync/:runId/fail', (req, res) => {

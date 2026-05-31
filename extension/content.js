@@ -218,6 +218,10 @@
     }
   }
 
+  function markSyncProgress(context) {
+    if (context) context.lastProgressAt = Date.now();
+  }
+
   async function withSyncTimeout(promise, ms, label, syncContext) {
     if (syncContext) assertSyncCanContinue(syncContext);
 
@@ -534,12 +538,14 @@
       const videoId = entry.video.id;
       if (!cleanup.ids.has(videoId) || cleanup.attempted.has(videoId)) continue;
 
+      markSyncProgress(syncContext);
       cleanup.attempted.add(videoId);
       panelApi.setSyncStatus(`Cleaning YouTube playlist... ${cleanup.removed + cleanup.failed + 1}`, 'busy', {
         key: SYNC_CLEANUP_STATUS_KEY
       });
 
       const result = await removeYoutubePlaylistEntry(entry);
+      markSyncProgress(syncContext);
       if (result.success) {
         cleanup.removed++;
         removedIds.add(videoId);
@@ -569,6 +575,7 @@
       }
 
       await delay(250);
+      markSyncProgress(syncContext);
     }
 
     return removedIds;
@@ -591,6 +598,7 @@
         'Sync batch',
         syncContext
       );
+      markSyncProgress(syncContext);
     }
 
     return pending.length;
@@ -599,40 +607,45 @@
   async function collectAndSendSyncVideos(runId, seenIds, cleanup = null, syncContext = null) {
     if (syncContext) assertSyncCanContinue(syncContext);
     const entries = collectLoadedPlaylistEntries();
+    const cleanupAttemptedBefore = cleanup && cleanup.enabled ? cleanup.attempted.size : 0;
     const removedIds = await cleanupRemovedYoutubeEntries(entries, cleanup, syncContext);
     const excludeIds = cleanup && cleanup.enabled ? cleanup.ids : removedIds;
     const syncEntries = excludeIds.size > 0
       ? entries.filter(entry => !excludeIds.has(entry.video.id))
       : entries;
-    return sendSyncVideos(runId, syncEntries.map(entry => entry.video), seenIds, syncContext);
+    const added = await sendSyncVideos(runId, syncEntries.map(entry => entry.video), seenIds, syncContext);
+    const cleaned = cleanup && cleanup.enabled ? cleanup.attempted.size - cleanupAttemptedBefore : removedIds.size;
+    return { added, cleaned };
   }
 
   async function waitForPlaylistProgress(runId, seenIds, previousHeight, timeoutMs, cleanup = null, syncContext = null) {
     const deadline = Date.now() + timeoutMs;
     let addedTotal = 0;
+    let cleanedTotal = 0;
     let heightChanged = false;
 
     while (Date.now() < deadline) {
       if (syncContext) assertSyncCanContinue(syncContext);
       await delay(500);
 
-      const added = await collectAndSendSyncVideos(runId, seenIds, cleanup, syncContext);
-      addedTotal += added;
+      const progress = await collectAndSendSyncVideos(runId, seenIds, cleanup, syncContext);
+      addedTotal += progress.added;
+      cleanedTotal += progress.cleaned;
 
       const metrics = getScrollMetrics();
       if (metrics.scrollHeight > previousHeight + 24) {
         heightChanged = true;
       }
 
-      if (added > 0 || heightChanged) {
-        return { added: addedTotal, heightChanged };
+      if (progress.added > 0 || progress.cleaned > 0 || heightChanged) {
+        return { added: addedTotal, cleaned: cleanedTotal, heightChanged };
       }
 
       if (metrics.nearBottom) holdAtBottomForSync();
       else scrollDownForSync();
     }
 
-    return { added: addedTotal, heightChanged };
+    return { added: addedTotal, cleaned: cleanedTotal, heightChanged };
   }
 
 
@@ -689,7 +702,7 @@
 
       for (let round = 0; round < 1600; round++) {
         assertSyncCanContinue(syncContext);
-        const addedNow = await collectAndSendSyncVideos(run.id, seenIds, cleanup, syncContext);
+        const progressNow = await collectAndSendSyncVideos(run.id, seenIds, cleanup, syncContext);
         const metrics = getScrollMetrics();
         const expectedSuffix = expectedCount ? ` / ${expectedCount}` : '';
         panel.setSyncStatus(`Synced ${seenIds.size}${expectedSuffix} videos. Loading more...`, 'busy', {
@@ -700,7 +713,11 @@
         else scrollDownForSync();
 
         const progress = await waitForPlaylistProgress(run.id, seenIds, metrics.scrollHeight, 3000, cleanup, syncContext);
-        const madeProgress = addedNow > 0 || progress.added > 0 || progress.heightChanged;
+        const madeProgress = progressNow.added > 0 ||
+          progressNow.cleaned > 0 ||
+          progress.added > 0 ||
+          progress.cleaned > 0 ||
+          progress.heightChanged;
 
         if (madeProgress) {
           idleBottomRounds = 0;
