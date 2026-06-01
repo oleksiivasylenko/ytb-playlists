@@ -19,6 +19,7 @@
   let panelApi = null;
   let activePlaylistSync = null;
   const ytbPreview = window.ytbPreview.create({ id: 'ytb-actions-preview', maxWidth: 520, minWidth: 300, positionMode: 'document' });
+  const externalLinkIcon = '<svg class="yt-summary-external-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7"></path><path d="M21 3l-9 9"></path><path d="M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"></path></svg>';
   const SYNC_PROGRESS_STATUS_KEY = 'playlist-sync-progress';
   const SYNC_CLEANUP_STATUS_KEY = 'playlist-sync-cleanup-progress';
   const YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY = 'youtubeCleanupReviewPrompt';
@@ -999,6 +1000,16 @@
     }
   }
 
+  async function openSummaryPage(videoId, mode, active) {
+    if (window.api.openSummaryPage) {
+      await window.api.openSummaryPage(videoId, mode, { active });
+      return;
+    }
+
+    const url = chrome.runtime.getURL(`asset.html?type=summary&videoId=${encodeURIComponent(videoId)}&mode=${encodeURIComponent(mode)}`);
+    window.open(url, '_blank');
+  }
+
   function ensureQuickSaveInitialized() {
     if (!quickSaveInitPromise) {
       quickSaveInitPromise = initQuickSave().catch(error => {
@@ -1015,8 +1026,9 @@
     if (!videoId || !wrapper) return;
 
     const transcriptBtn = wrapper.querySelector('[data-ytb-action="transcript"]');
-    const summaryBtn = wrapper.querySelector('[data-ytb-action="summary"]');
-    if (!transcriptBtn || !summaryBtn) return;
+    const summaryWrap = wrapper.querySelector('.ytb-summary-actions');
+    const summaryBtns = Array.from(wrapper.querySelectorAll('[data-ytb-summary-action]'));
+    if (!transcriptBtn || summaryBtns.length === 0) return;
 
     try {
       const [transcriptStatus, summaryStatus, summaryMode] = await Promise.all([
@@ -1035,14 +1047,42 @@
         : transcriptStatus.transcriptUnavailable ? 'Transcript unavailable' : 'Fetch transcript';
       const hasSummary = summaryMode === 'html' ? !!summaryStatus.hasHtmlSummary : !!summaryStatus.hasSummary;
       const summaryBlocked = !transcriptStatus.hasTranscript;
-      setYtbActionButtonState(summaryBtn, hasSummary, summaryBusy, summaryBlocked, 'S');
-      summaryBtn.title = summaryBusy
-        ? `Generating ${summaryMode === 'html' ? 'HTML summary' : 'summary'}`
-        : summaryBlocked
-        ? 'Fetch transcript first'
-        : hasSummary
-        ? `${summaryMode === 'html' ? 'HTML summary' : 'Summary'} ready`
-        : `Generate ${summaryMode === 'html' ? 'HTML summary' : 'summary'}`;
+      if (summaryWrap) {
+        summaryWrap.classList.toggle('ytb-summary-actions--ready', hasSummary);
+        summaryWrap.classList.toggle('ytb-summary-actions--missing', !hasSummary);
+        summaryWrap.classList.toggle('ytb-summary-actions--busy', summaryBusy);
+        summaryWrap.classList.toggle('ytb-summary-actions--disabled', summaryBlocked || summaryBusy);
+      }
+      const summaryTitles = {
+        generate: {
+          ready: `${summaryMode === 'html' ? 'HTML summary' : 'Summary'} ready`,
+          missing: `Generate ${summaryMode === 'html' ? 'HTML summary' : 'summary'}`
+        },
+        'open-active': {
+          ready: 'Open summary page and switch to it',
+          missing: 'Generate summary, then open page and switch to it'
+        },
+        'open-background': {
+          ready: 'Open summary page in background',
+          missing: 'Generate summary, then open page in background'
+        }
+      };
+
+      summaryBtns.forEach(summaryBtn => {
+        const action = summaryBtn.dataset.ytbSummaryAction || 'generate';
+        setYtbActionButtonState(summaryBtn, hasSummary, summaryBusy, summaryBlocked || summaryBusy, summaryBtn.dataset.ytbLabel || '');
+        if (!summaryBusy) {
+          if (summaryBtn.dataset.ytbIcon === 'external-link') summaryBtn.innerHTML = externalLinkIcon;
+          else summaryBtn.textContent = summaryBtn.dataset.ytbLabel || 'S';
+        }
+        summaryBtn.title = summaryBusy
+          ? `Generating ${summaryMode === 'html' ? 'HTML summary' : 'summary'}`
+          : summaryBlocked
+          ? 'Fetch transcript first'
+          : hasSummary
+          ? (summaryTitles[action] || summaryTitles.generate).ready
+          : (summaryTitles[action] || summaryTitles.generate).missing;
+      });
     } catch (error) {
       logContentError('YTB actions: failed to update state', error);
     }
@@ -1055,7 +1095,8 @@
 
   async function showYtbPreview(anchor, type) {
     if (anchor.disabled) return;
-    if (!anchor.classList.contains('ytb-action-btn--ready')) return;
+    const readyClass = type === 'summary' ? 'ytb-summary-actions--ready' : 'ytb-action-btn--ready';
+    if (!anchor.classList.contains(readyClass)) return;
 
     const videoId = getVideoIdFromUrl();
     if (!videoId) return;
@@ -1127,7 +1168,7 @@
     }
   }
 
-  async function handleYtbSummaryClick(button) {
+  async function handleYtbSummaryClick(button, action = 'generate') {
     const videoId = getVideoIdFromUrl();
     if (!videoId || watchSummaryLoads.has(videoId) || button.disabled || button.classList.contains('ytb-action-btn--busy')) return;
 
@@ -1144,11 +1185,14 @@
       }
       const status = await window.api.getSummaryStatus(videoId, { force: true });
       const hasSummary = summaryMode === 'html' ? status.hasHtmlSummary : status.hasSummary;
+      const shouldOpen = action === 'open-active' || action === 'open-background';
       if (hasSummary) {
+        if (shouldOpen) await openSummaryPage(videoId, summaryMode, action === 'open-active');
         await updateYtbActionButtonsState();
         return;
       }
       await window.api.requestSummary(videoId, summaryMode);
+      if (shouldOpen) await openSummaryPage(videoId, summaryMode, action === 'open-active');
       await updateYtbActionButtonsState();
       if (panelApi && panelApi.isOpen()) panelApi.loadVideos();
     } catch (error) {
@@ -1178,21 +1222,35 @@
     transcriptBtn.addEventListener('mouseenter', () => showYtbPreview(transcriptBtn, 'transcript'));
     transcriptBtn.addEventListener('mouseleave', scheduleYtbPreviewHide);
 
-    const summaryBtn = document.createElement('button');
-    summaryBtn.type = 'button';
-    summaryBtn.className = 'ytb-action-btn ytb-action-btn--missing';
-    summaryBtn.dataset.ytbAction = 'summary';
-    summaryBtn.title = 'Generate summary';
-    summaryBtn.textContent = 'S';
-    summaryBtn.addEventListener('click', event => {
-      event.stopPropagation();
-      handleYtbSummaryClick(summaryBtn);
+    const summaryWrap = document.createElement('div');
+    summaryWrap.className = 'ytb-summary-actions ytb-summary-actions--missing';
+
+    [
+      { action: 'generate', label: 'S', title: 'Generate summary' },
+      { action: 'open-active', label: '', icon: 'external-link', title: 'Generate summary, then open page and switch to it' },
+      { action: 'open-background', label: 'S+', title: 'Generate summary, then open page in background' }
+    ].forEach(config => {
+      const summaryBtn = document.createElement('button');
+      summaryBtn.type = 'button';
+      summaryBtn.className = 'ytb-action-btn ytb-action-btn--missing';
+      summaryBtn.dataset.ytbAction = 'summary';
+      summaryBtn.dataset.ytbSummaryAction = config.action;
+      summaryBtn.dataset.ytbLabel = config.label;
+      if (config.icon) summaryBtn.dataset.ytbIcon = config.icon;
+      summaryBtn.title = config.title;
+      summaryBtn.innerHTML = config.icon === 'external-link' ? externalLinkIcon : config.label;
+      summaryBtn.addEventListener('click', event => {
+        event.stopPropagation();
+        handleYtbSummaryClick(summaryBtn, config.action);
+      });
+      summaryWrap.appendChild(summaryBtn);
     });
-    summaryBtn.addEventListener('mouseenter', () => showYtbPreview(summaryBtn, 'summary'));
-    summaryBtn.addEventListener('mouseleave', scheduleYtbPreviewHide);
+
+    summaryWrap.addEventListener('mouseenter', () => showYtbPreview(summaryWrap, 'summary'));
+    summaryWrap.addEventListener('mouseleave', scheduleYtbPreviewHide);
 
     wrapper.appendChild(transcriptBtn);
-    wrapper.appendChild(summaryBtn);
+    wrapper.appendChild(summaryWrap);
     return wrapper;
   }
 

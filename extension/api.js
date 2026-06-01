@@ -362,6 +362,23 @@ const api = {
     cacheInvalidate('playlist_videos_', 'generated_summaries');
     return data;
   },
+  async openSummaryPage(videoId, mode = 'plain', options = {}) {
+    const normalizedMode = mode === 'html' ? 'html' : 'plain';
+    const active = options.active !== false;
+
+    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+      return sendRuntimeMessage({
+        action: 'openSummaryPage',
+        videoId,
+        mode: normalizedMode,
+        active
+      });
+    }
+
+    const url = `asset.html?type=summary&videoId=${encodeURIComponent(videoId)}&mode=${encodeURIComponent(normalizedMode)}`;
+    window.open(url, '_blank');
+    return { success: true };
+  },
   async getTagStatus(videoId, options = {}) {
     const key = `video_tag_status_${videoId}`;
     const force = !!options.force;

@@ -223,6 +223,88 @@ async function openYoutubeVideo(videoId, options = {}) {
   return { success: true };
 }
 
+const SUMMARY_PAGE_TABS_KEY = 'summaryPageTabs';
+
+function getSummaryPageKey(videoId, mode) {
+  return `${videoId}:${mode}`;
+}
+
+function isSummaryPageUrl(url, videoId, mode) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.href.startsWith(chrome.runtime.getURL('asset.html')) &&
+      parsed.searchParams.get('type') === 'summary' &&
+      parsed.searchParams.get('videoId') === videoId &&
+      (parsed.searchParams.get('mode') || 'plain') === mode;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function getStoredSummaryPageTabs() {
+  const stored = await chrome.storage.local.get([SUMMARY_PAGE_TABS_KEY]);
+  return stored[SUMMARY_PAGE_TABS_KEY] && typeof stored[SUMMARY_PAGE_TABS_KEY] === 'object'
+    ? stored[SUMMARY_PAGE_TABS_KEY]
+    : {};
+}
+
+async function setStoredSummaryPageTab(key, tabId) {
+  const summaryPageTabs = await getStoredSummaryPageTabs();
+  summaryPageTabs[key] = tabId;
+  await chrome.storage.local.set({ [SUMMARY_PAGE_TABS_KEY]: summaryPageTabs });
+}
+
+async function removeStoredSummaryPageTab(key) {
+  const summaryPageTabs = await getStoredSummaryPageTabs();
+  if (!(key in summaryPageTabs)) return;
+  delete summaryPageTabs[key];
+  await chrome.storage.local.set({ [SUMMARY_PAGE_TABS_KEY]: summaryPageTabs });
+}
+
+async function activateTab(tab) {
+  await chrome.tabs.update(tab.id, { active: true });
+  if (tab.windowId && chrome.windows && chrome.windows.update) {
+    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  }
+}
+
+async function openSummaryPage(videoId, options = {}) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) throw new Error('Missing video id.');
+
+  const mode = options.mode === 'html' ? 'html' : 'plain';
+  const key = getSummaryPageKey(videoId, mode);
+  const url = chrome.runtime.getURL(`asset.html?type=summary&videoId=${encodeURIComponent(videoId)}&mode=${encodeURIComponent(mode)}`);
+
+  const storedTabs = await getStoredSummaryPageTabs();
+  const storedTabId = storedTabs[key];
+  if (storedTabId) {
+    try {
+      const storedTab = await chrome.tabs.get(storedTabId);
+      if (storedTab && storedTab.id && isSummaryPageUrl(storedTab.url, videoId, mode)) {
+        await activateTab(storedTab);
+        return { success: true, existing: true };
+      }
+      await removeStoredSummaryPageTab(key);
+    } catch (err) {
+      await removeStoredSummaryPageTab(key);
+    }
+  }
+
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find(tab => isSummaryPageUrl(tab.url, videoId, mode));
+
+  if (existing && existing.id) {
+    await setStoredSummaryPageTab(key, existing.id);
+    await activateTab(existing);
+    return { success: true, existing: true };
+  }
+
+  const tab = await chrome.tabs.create({ url, active: options.active !== false });
+  if (tab.id) await setStoredSummaryPageTab(key, tab.id);
+  return { success: true };
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   await configureOpenTabsSidePanels();
 });
@@ -258,6 +340,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     task = stopPlaylistSync(request);
   } else if (request.action === 'openYoutubeVideo') {
     task = openYoutubeVideo(request.videoId, { newTab: !!request.newTab });
+  } else if (request.action === 'openSummaryPage') {
+    task = openSummaryPage(request.videoId, {
+      mode: request.mode,
+      active: request.active !== false
+    });
   } else if (request.action === 'apiFetch') {
     task = proxyApiFetch(request);
   }

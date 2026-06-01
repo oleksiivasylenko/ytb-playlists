@@ -213,6 +213,7 @@
   const transcriptLoads = new Set();
   const summaryLoads = new Set();
   const tagLoads = new Set();
+  const externalLinkIcon = '<svg class="yt-summary-external-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7"></path><path d="M21 3l-9 9"></path><path d="M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"></path></svg>';
   const REMOVAL_DELAY_MS = 5000;
   const MOVE_DESELECT_HOLD_MS = 1000;
   const SYNC_STATUS_DISPLAY_MS = 1500;
@@ -1131,7 +1132,7 @@
 
     const pendingRecord = pendingRemovals.get(video.id);
     const transcriptBtn = item.querySelector('.yt-playlist-alt-transcript-btn');
-    const summaryBtn = item.querySelector('.yt-playlist-alt-summary-btn');
+    const summaryBtn = item.querySelector('.yt-playlist-alt-summary-actions, .yt-playlist-alt-summary-btn');
     const tagBtn = item.querySelector('.yt-playlist-alt-tags-btn');
     if (transcriptBtn) transcriptBtn.replaceWith(createTranscriptButton(video, pendingRecord));
     if (summaryBtn) summaryBtn.replaceWith(createSummaryButton(video, pendingRecord));
@@ -1537,7 +1538,27 @@
     }
   }
 
-  async function handleSummaryClick(event, video) {
+  async function openSummaryPage(video, active) {
+    if (window.api.openSummaryPage) {
+      await window.api.openSummaryPage(video.id, summaryMode, { active });
+      return;
+    }
+
+    const url = chrome.runtime.getURL(`asset.html?type=summary&videoId=${encodeURIComponent(video.id)}&mode=${encodeURIComponent(summaryMode)}`);
+    window.open(url, '_blank');
+  }
+
+  async function openSummaryPageWithStatus(video, active) {
+    try {
+      await openSummaryPage(video, active);
+      return true;
+    } catch (err) {
+      setSyncStatus(`Failed to open summary page: ${err.message || 'unknown error'}`, 'error', { persist: false });
+      return false;
+    }
+  }
+
+  async function handleSummaryClick(event, video, action = 'generate') {
     event.stopPropagation();
     if (pendingRemovals.has(video.id)) return;
     if (summaryLoads.has(video.id)) return;
@@ -1546,11 +1567,17 @@
       return;
     }
 
-    if (hasSummary(video)) return;
+    const shouldOpen = action === 'open-active' || action === 'open-background';
+    const openActive = action === 'open-active';
+
+    if (hasSummary(video)) {
+      if (shouldOpen) await openSummaryPageWithStatus(video, openActive);
+      return;
+    }
 
     summaryLoads.add(video.id);
     updateVideoAssetButtons(video.id);
-    setSyncStatus('Generating summary...', 'busy', { persist: false });
+    setSyncStatus(shouldOpen ? 'Generating summary before opening page...' : 'Generating summary...', 'busy', { persist: false });
 
     try {
       const summary = await window.api.requestSummary(video.id, summaryMode);
@@ -1558,7 +1585,13 @@
         ? { has_html_summary: 1, html_summary_updated_at: summary.updatedAt }
         : { has_summary: 1, summary_updated_at: summary.updatedAt });
       if (updated) Object.assign(video, updated);
-      setSyncStatus('Summary generated and saved.', 'success', { persist: false });
+      if (shouldOpen) {
+        const opened = await openSummaryPageWithStatus(video, openActive);
+        if (!opened) return;
+        setSyncStatus(openActive ? 'Summary generated and opened.' : 'Summary generated; page opened in background.', 'success', { persist: false });
+      } else {
+        setSyncStatus('Summary generated and saved.', 'success', { persist: false });
+      }
     } catch (err) {
       setSyncStatus(`Failed to generate summary: ${err.message || 'unknown error'}`, 'error', { persist: false });
     } finally {
@@ -2761,7 +2794,7 @@
     item.appendChild(tagBtn);
     if (removeBtn) item.appendChild(removeBtn);
     function isVideoActionTarget(target) {
-      return !!(target && target.closest && target.closest('button'));
+      return !!(target && target.closest && target.closest('button, .yt-playlist-alt-summary-actions'));
     }
 
     function openVideoItem(newTab) {
@@ -2817,25 +2850,63 @@
   }
 
   function createSummaryButton(video, pendingRecord) {
-    const summaryBtn = document.createElement('button');
+    const wrap = document.createElement('div');
     const transcriptReady = hasTranscript(video);
     const summaryReady = hasSummary(video);
     const summaryLoading = summaryLoads.has(video.id);
     const summaryBlocked = !transcriptReady;
-    summaryBtn.className = `yt-playlist-alt-summary-btn ${summaryReady ? 'yt-playlist-alt-summary-btn--ready' : 'yt-playlist-alt-summary-btn--missing'}`;
-    if (summaryLoading) summaryBtn.classList.add('yt-playlist-alt-summary-btn--loading');
-    summaryBtn.type = 'button';
-    summaryBtn.disabled = summaryBlocked;
-    summaryBtn.title = summaryBlocked ? 'Fetch transcript first' : summaryReady ? 'Summary ready' : 'Generate summary';
-    summaryBtn.setAttribute('aria-label', summaryBtn.title);
-    summaryBtn.innerHTML = summaryLoading ? '<span class="yt-transcript-spinner"></span>' : 'S';
-    summaryBtn.onclick = event => handleSummaryClick(event, video);
+    const stateClass = summaryReady ? 'yt-playlist-alt-summary-btn--ready' : 'yt-playlist-alt-summary-btn--missing';
+    const actions = [
+      {
+        action: 'generate',
+        label: 'S',
+        readyTitle: 'Summary ready',
+        missingTitle: 'Generate summary'
+      },
+      {
+        action: 'open-active',
+        html: externalLinkIcon,
+        readyTitle: 'Open summary page and switch to it',
+        missingTitle: 'Generate summary, then open page and switch to it'
+      },
+      {
+        action: 'open-background',
+        label: 'S+',
+        readyTitle: 'Open summary page in background',
+        missingTitle: 'Generate summary, then open page in background'
+      }
+    ];
+
+    wrap.className = 'yt-playlist-alt-summary-actions';
+    wrap.classList.add(summaryReady ? 'yt-playlist-alt-summary-actions--ready' : 'yt-playlist-alt-summary-actions--missing');
+    if (summaryLoading) wrap.classList.add('yt-playlist-alt-summary-actions--loading');
+    if (summaryBlocked) wrap.classList.add('yt-playlist-alt-summary-actions--disabled');
+
+    actions.forEach(config => {
+      const summaryBtn = document.createElement('button');
+      summaryBtn.className = `yt-playlist-alt-summary-btn ${stateClass}`;
+      if (summaryLoading) summaryBtn.classList.add('yt-playlist-alt-summary-btn--loading');
+      summaryBtn.type = 'button';
+      summaryBtn.disabled = summaryBlocked || summaryLoading;
+      summaryBtn.title = summaryBlocked
+        ? 'Fetch transcript first'
+        : summaryLoading
+        ? 'Generating summary'
+        : summaryReady
+        ? config.readyTitle
+        : config.missingTitle;
+      summaryBtn.setAttribute('aria-label', summaryBtn.title);
+      summaryBtn.innerHTML = summaryLoading ? '<span class="yt-transcript-spinner"></span>' : config.html || config.label;
+      summaryBtn.onclick = event => handleSummaryClick(event, video, config.action);
+      wrap.appendChild(summaryBtn);
+    });
+
     if (!pendingRecord && summaryReady) {
-      summaryBtn.addEventListener('mouseenter', () => showPreview(summaryBtn, video, 'summary'));
-      summaryBtn.addEventListener('mouseleave', scheduleHidePreview);
+      wrap.addEventListener('mouseenter', () => showPreview(wrap, video, 'summary'));
+      wrap.addEventListener('mouseleave', scheduleHidePreview);
     }
 
-    return summaryBtn;
+    return wrap;
   }
 
   function createTagButton(video, pendingRecord) {
