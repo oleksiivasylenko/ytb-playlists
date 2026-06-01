@@ -655,7 +655,9 @@ router.delete('/playlists/:id/videos/:videoId', (req, res) => {
         youtube_cleanup_error = CASE WHEN status = 'active' THEN NULL ELSE youtube_cleanup_error END,
         moved_to_playlist_id = NULL,
         moved_at = NULL
-    WHERE playlist_id = ? AND video_id = ?
+    WHERE playlist_id = ?
+      AND video_id = ?
+      AND status IN ('active', 'removed_from_source', 'removed', 'unavailable_on_youtube', 'unavailable')
   `).run(req.params.id, videoId);
   res.json({ success: true });
 });
@@ -787,7 +789,7 @@ router.post('/playlists/:id/videos/:videoId/youtube-cleanup', (req, res) => {
   if (result === 'removed') {
     const info = db.prepare(`
       UPDATE playlist_videos
-      SET youtube_removed_at = COALESCE(youtube_removed_at, CURRENT_TIMESTAMP),
+      SET youtube_removed_at = CURRENT_TIMESTAMP,
           youtube_cleanup_error = NULL,
           last_checked_at = CURRENT_TIMESTAMP
       WHERE playlist_id = ?

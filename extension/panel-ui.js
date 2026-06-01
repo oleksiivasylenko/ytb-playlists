@@ -221,6 +221,7 @@
   const AUTO_SUMMARY_STATUS_KEY = 'auto-summary-progress';
   const AUTO_TAG_STATUS_KEY = 'auto-tag-progress';
   const YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY = 'youtubeCleanupReviewPrompt';
+  const YOUTUBE_CLEANUP_REAPPEARED_GRACE_MS = 1000;
   let lastYoutubeCleanupReviewPromptKey = '';
 
   function cleanupPanelRuntime() {
@@ -1658,6 +1659,17 @@
     return (status === 'active' || status === 'removed_by_user') && !pendingRemovals.has(video.id);
   }
 
+  function isRemovableVideo(video) {
+    const status = normalizeVideoStatus(video);
+    return (
+      status === 'active' ||
+      status === 'removed_from_source' ||
+      status === 'removed' ||
+      status === 'unavailable_on_youtube' ||
+      status === 'unavailable'
+    ) && !pendingRemovals.has(video.id);
+  }
+
   function getMovableVideos(videos) {
     return videos.filter(isMovableVideo);
   }
@@ -2081,7 +2093,10 @@
   function queueVideoRemoval(videoOrId, reason = 'manual') {
     const videoId = typeof videoOrId === 'string' ? videoOrId : videoOrId && videoOrId.id;
     if (!videoId || !currentPlaylistId || pendingRemovals.has(videoId)) return false;
-    if (!allVideos.some(v => v.id === videoId)) return false;
+    const video = typeof videoOrId === 'string'
+      ? allVideos.find(item => item.id === videoId)
+      : videoOrId;
+    if (!video || !isRemovableVideo(video)) return false;
 
     pendingRemovals.set(videoId, {
       videoId,
@@ -2486,6 +2501,7 @@
     headerLeft.appendChild(meta);
 
     const movableVideos = getMovableVideos(videos);
+    const removableVideos = videos.filter(isRemovableVideo);
     const restoreMove = movableVideos.some(isRestorableVideo);
     const moveBtn = document.createElement('button');
     moveBtn.className = 'yt-playlist-alt-video-move';
@@ -2500,22 +2516,24 @@
     moveBtn.disabled = movableVideos.length === 0;
     moveBtn.onclick = event => handleMoveVideos(event, videos);
 
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'yt-playlist-alt-video-remove';
-    deleteBtn.textContent = pendingCount > 0 ? 'Stop' : '×';
-    deleteBtn.onclick = event => {
-      event.stopPropagation();
-      if (pendingCount > 0) {
-        cancelPendingRemovals(videos.map(video => video.id));
-        renderVideos();
-        return;
-      }
-      requestVideoRemovals(videos, 'group');
-    };
+    const deleteBtn = pendingCount > 0 || removableVideos.length > 0 ? document.createElement('button') : null;
+    if (deleteBtn) {
+      deleteBtn.className = 'yt-playlist-alt-video-remove';
+      deleteBtn.textContent = pendingCount > 0 ? 'Stop' : '×';
+      deleteBtn.onclick = event => {
+        event.stopPropagation();
+        if (pendingCount > 0) {
+          cancelPendingRemovals(videos.map(video => video.id));
+          renderVideos();
+          return;
+        }
+        requestVideoRemovals(removableVideos, 'group');
+      };
+    }
 
     header.appendChild(headerLeft);
     header.appendChild(moveBtn);
-    header.appendChild(deleteBtn);
+    if (deleteBtn) header.appendChild(deleteBtn);
 
     const content = document.createElement('div');
     content.className = 'yt-playlist-alt-group-content';
@@ -2681,14 +2699,17 @@
     moveBtn.disabled = !isMovableVideo(video);
     bindMoveArrowButton(moveBtn, video);
 
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'yt-playlist-alt-video-remove';
+    const removeBtn = isYoutubeCleanupPending(video) || isRemovableVideo(video)
+      ? document.createElement('button')
+      : null;
     if (isYoutubeCleanupPending(video)) {
+      removeBtn.className = 'yt-playlist-alt-video-remove';
       removeBtn.innerHTML = '&#10003;';
       removeBtn.title = 'Mark removed from YouTube';
       removeBtn.setAttribute('aria-label', removeBtn.title);
       removeBtn.onclick = event => handleMarkYoutubeCleanedClick(event, video);
-    } else {
+    } else if (removeBtn) {
+      removeBtn.className = 'yt-playlist-alt-video-remove';
       removeBtn.innerHTML = '&#10005;';
       removeBtn.title = 'Remove from playlist';
       removeBtn.setAttribute('aria-label', removeBtn.title);
@@ -2738,7 +2759,7 @@
     item.appendChild(transcriptBtn);
     item.appendChild(summaryBtn);
     item.appendChild(tagBtn);
-    item.appendChild(removeBtn);
+    if (removeBtn) item.appendChild(removeBtn);
     function isVideoActionTarget(target) {
       return !!(target && target.closest && target.closest('button'));
     }
@@ -2957,15 +2978,64 @@
     return toggleBtn;
   }
 
-  function askYoutubeCleanup() {
+  function toCleanupTimestamp(value) {
+    if (!value) return 0;
+    const text = String(value).trim();
+    const hasTimezone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(text);
+    const normalized = hasTimezone ? text : `${text.replace(' ', 'T')}Z`;
+    const timestamp = new Date(normalized).getTime();
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+  }
+
+  function isYoutubeCleanupReappeared(video) {
+    const lastSeenAt = toCleanupTimestamp(video && video.last_seen_at);
+    const removedAt = toCleanupTimestamp(video && video.youtube_removed_at);
+    return lastSeenAt > 0 &&
+      removedAt > 0 &&
+      lastSeenAt - removedAt > YOUTUBE_CLEANUP_REAPPEARED_GRACE_MS;
+  }
+
+  function getYoutubeCleanupPromptCounts(videos) {
+    const counts = { pending: 0, reappeared: 0 };
+    const list = Array.isArray(videos) ? videos : [];
+
+    for (const video of list) {
+      if (!video) continue;
+      if (!video.youtube_removed_at) {
+        counts.pending++;
+      } else if (isYoutubeCleanupReappeared(video)) {
+        counts.reappeared++;
+      }
+    }
+
+    return counts;
+  }
+
+  function askYoutubeCleanup(cleanupCounts) {
     return new Promise(resolve => {
+      const pendingCount = Number(cleanupCounts && cleanupCounts.pending) || 0;
+      const reappearedCount = Number(cleanupCounts && cleanupCounts.reappeared) || 0;
+      const textParts = [];
+
+      if (pendingCount > 0) {
+        const noun = pendingCount === 1 ? 'video is' : 'videos are';
+        textParts.push(`${pendingCount} ${noun} marked as removed or moved in this panel and still pending YouTube cleanup.`);
+      }
+
+      if (reappearedCount > 0) {
+        const noun = reappearedCount === 1 ? 'video has' : 'videos have';
+        textParts.push(`${reappearedCount} previously cleaned ${noun} been seen again in the real YouTube playlist after cleanup.`);
+      }
+
+      textParts.push('During sync, remove matching videos from the real YouTube playlist when they are found?');
+
       const overlay = document.createElement('div');
       overlay.className = 'yt-sync-cleanup-modal';
       overlay.innerHTML = `
         <div class="yt-sync-cleanup-dialog">
           <div class="yt-sync-cleanup-title">Clean YouTube playlist?</div>
           <div class="yt-sync-cleanup-text">
-            During sync, remove videos from this YouTube playlist when they are already marked as removed or moved in this panel?
+            ${textParts.join(' ')}
           </div>
           <div class="yt-sync-cleanup-actions">
             <button type="button" data-choice="no">No, sync only</button>
@@ -3122,11 +3192,14 @@
         throw new Error('Current YouTube page does not match the selected playlist URL.');
       }
 
-      const cleanupCandidates = await window.api.getYoutubeCleanupCandidateVideos(currentPlaylistId);
+      const cleanupCandidates = await window.api.getYoutubeCleanupCandidateVideos(currentPlaylistId, { force: true });
       if (syncToken !== syncRequestToken) return;
+      const cleanupCandidateList = Array.isArray(cleanupCandidates) ? cleanupCandidates : [];
+      const cleanupCounts = getYoutubeCleanupPromptCounts(cleanupCandidateList);
+      const cleanupPromptCount = cleanupCounts.pending + cleanupCounts.reappeared;
       const cleanupYoutube = typeof syncOptions.cleanupYoutube === 'boolean'
         ? syncOptions.cleanupYoutube
-        : cleanupCandidates.length > 0 ? await askYoutubeCleanup() : false;
+        : cleanupPromptCount > 0 ? await askYoutubeCleanup(cleanupCounts) : false;
       if (syncToken !== syncRequestToken) return;
 
       safeStorageSet({ selectedPlaylistId: currentPlaylistId });
