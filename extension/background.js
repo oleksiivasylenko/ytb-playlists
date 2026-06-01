@@ -74,6 +74,7 @@ function getPlaylistListIdFromUrl(url) {
   if (!url) return null;
   try {
     const parsed = new URL(url);
+    if (parsed.pathname !== '/playlist') return null;
     const listId = parsed.searchParams.get('list');
     return listId && /^[a-zA-Z0-9_-]+$/.test(listId) ? listId : null;
   } catch (err) {

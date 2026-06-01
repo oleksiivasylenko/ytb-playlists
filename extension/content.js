@@ -180,11 +180,12 @@
     return error;
   }
 
-  function startSyncContext() {
+  function startSyncContext(source = null) {
     const now = Date.now();
     const context = {
       cancelled: false,
       cancelMessage: '',
+      sourceId: source && source.sourceId ? source.sourceId : getCurrentPlaylistPageSourceId(),
       startedAt: now,
       deadlineAt: now + SYNC_MAX_DURATION_MS,
       lastProgressAt: now
@@ -207,6 +208,15 @@
 
     if (context.cancelled) {
       throw createSyncStopError(context.cancelMessage || 'Sync stopped.', { shouldFailRun: false });
+    }
+
+    const currentSourceId = getCurrentPlaylistPageSourceId();
+    if (!currentSourceId) {
+      throw createSyncStopError('Sync stopped because this tab left the YouTube playlist page.');
+    }
+
+    if (context.sourceId && currentSourceId !== context.sourceId) {
+      throw createSyncStopError('Sync stopped because this tab opened a different YouTube playlist.');
     }
 
     const now = Date.now();
@@ -343,8 +353,14 @@
     return '';
   }
 
-  function getYoutubePlaylistSource() {
+  function getCurrentPlaylistPageSourceId() {
+    if (window.location.pathname !== '/playlist') return null;
     const sourceId = new URLSearchParams(window.location.search).get('list');
+    return sourceId || null;
+  }
+
+  function getYoutubePlaylistSource() {
+    const sourceId = getCurrentPlaylistPageSourceId();
     if (!sourceId) return null;
 
     const titleEl = document.querySelector('ytd-playlist-header-renderer h1, ytd-playlist-sidebar-primary-info-renderer h1, yt-formatted-string.title');
@@ -397,13 +413,15 @@
     window.dispatchEvent(new Event('scroll'));
   }
 
-  function scrollDownForSync() {
+  function scrollDownForSync(syncContext = null) {
+    if (syncContext) assertSyncCanContinue(syncContext);
     const metrics = getScrollMetrics();
     const step = Math.max(900, Math.floor(window.innerHeight * 1.25));
     scrollToPosition(Math.min(metrics.scrollTop + step, metrics.scrollHeight));
   }
 
-  function holdAtBottomForSync() {
+  function holdAtBottomForSync(syncContext = null) {
+    if (syncContext) assertSyncCanContinue(syncContext);
     scrollToPosition(getScrollMetrics().scrollHeight);
   }
 
@@ -642,8 +660,8 @@
         return { added: addedTotal, cleaned: cleanedTotal, heightChanged };
       }
 
-      if (metrics.nearBottom) holdAtBottomForSync();
-      else scrollDownForSync();
+      if (metrics.nearBottom) holdAtBottomForSync(syncContext);
+      else scrollDownForSync(syncContext);
     }
 
     return { added: addedTotal, cleaned: cleanedTotal, heightChanged };
@@ -655,7 +673,7 @@
       return { success: false, error: 'Sync is already running.' };
     }
 
-    const syncContext = startSyncContext();
+    const syncContext = startSyncContext(source);
     const seenIds = new Set();
     let run = null;
     let playlist = null;
@@ -710,8 +728,8 @@
           key: SYNC_PROGRESS_STATUS_KEY
         });
 
-        if (metrics.nearBottom) holdAtBottomForSync();
-        else scrollDownForSync();
+        if (metrics.nearBottom) holdAtBottomForSync(syncContext);
+        else scrollDownForSync(syncContext);
 
         const progress = await waitForPlaylistProgress(run.id, seenIds, metrics.scrollHeight, 3000, cleanup, syncContext);
         const madeProgress = progressNow.added > 0 ||
