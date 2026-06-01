@@ -62,8 +62,17 @@ type OpenRouterResponse = {
 type OpenRouterErrorResponse = {
   error?: {
     message?: string;
-    code?: string;
+    code?: string | number;
+    metadata?: unknown;
   };
+  [key: string]: unknown;
+};
+
+type OpenRouterFailureContext = {
+  action: string;
+  videoId: string;
+  mode?: SummaryMode;
+  model: string;
 };
 
 const activeSummaries = new Map<string, Promise<StoredSummary>>();
@@ -83,6 +92,41 @@ function getOpenRouterApiKey() {
 
 function getOpenRouterBaseUrl() {
   return process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+}
+
+function openRouterErrorMessage(error: unknown) {
+  if (!axios.isAxiosError<OpenRouterErrorResponse>(error)) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  const status = error.response?.status;
+  const providerError = error.response?.data?.error;
+  const message = providerError?.message || error.message;
+  const code = providerError?.code ? ` (${providerError.code})` : '';
+
+  return status ? `HTTP ${status}: ${message}${code}` : `${message}${code}`;
+}
+
+function logOpenRouterError(context: OpenRouterFailureContext, error: unknown) {
+  if (!axios.isAxiosError<OpenRouterErrorResponse>(error)) {
+    console.error(`OpenRouter ${context.action} request failed:`, {
+      ...context,
+      error
+    });
+    return;
+  }
+
+  console.error(`OpenRouter ${context.action} request failed:`, {
+    ...context,
+    status: error.response?.status,
+    statusText: error.response?.statusText,
+    code: error.code,
+    message: error.message,
+    providerMessage: error.response?.data?.error?.message,
+    providerCode: error.response?.data?.error?.code,
+    providerMetadata: error.response?.data?.error?.metadata,
+    responseData: error.response?.data
+  });
 }
 
 export function getSummarySettings() {
@@ -416,8 +460,8 @@ async function requestOpenRouterSummary(videoId: string, mode: SummaryMode) {
     );
   } catch (error) {
     if (axios.isAxiosError<OpenRouterErrorResponse>(error)) {
-      const message = error.response?.data?.error?.message || error.message;
-      throw new Error(`OpenRouter request failed: ${message}`);
+      logOpenRouterError({ action: 'summary', videoId, mode, model: modeSettings.model }, error);
+      throw new Error(`OpenRouter request failed: ${openRouterErrorMessage(error)}`);
     }
     throw error;
   }
@@ -478,8 +522,8 @@ async function requestOpenRouterTags(videoId: string) {
     );
   } catch (error) {
     if (axios.isAxiosError<OpenRouterErrorResponse>(error)) {
-      const message = error.response?.data?.error?.message || error.message;
-      throw new Error(`OpenRouter request failed: ${message}`);
+      logOpenRouterError({ action: 'tags', videoId, model: settings.model }, error);
+      throw new Error(`OpenRouter request failed: ${openRouterErrorMessage(error)}`);
     }
     throw error;
   }

@@ -1112,6 +1112,7 @@ router.post('/videos/:id/summary', async (req, res) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to generate summary';
+    console.error(`Failed to generate summary for ${videoId} (${mode}):`, error);
     res.status(message.includes('OPENROUTER_API_KEY') ? 500 : 502).json({ error: message });
   }
 });
