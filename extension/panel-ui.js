@@ -2274,17 +2274,23 @@
     renderPlaylistOptions();
   }
 
-  function getPlayingVideoId() {
+  function getLivePlayingVideoId() {
     if (options.getPlayingVideoId) {
       const videoId = options.getPlayingVideoId();
       if (videoId) return videoId;
     }
+    return '';
+  }
+
+  function getPlayingVideoId() {
+    const liveVideoId = getLivePlayingVideoId();
+    if (liveVideoId) return liveVideoId;
     return currentPlayingVideoId;
   }
 
   async function resolveCurrentVideoId() {
-    const localVideoId = getPlayingVideoId();
-    if (localVideoId) return localVideoId;
+    const liveVideoId = getLivePlayingVideoId();
+    if (liveVideoId) return liveVideoId;
 
     if (options.getActiveVideoId) {
       const response = await options.getActiveVideoId(api);
