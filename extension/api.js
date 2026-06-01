@@ -460,6 +460,12 @@ const api = {
     if (!res.ok) throw new Error(data.error || 'Failed to load metadata refresh status');
     return data;
   },
+  async getVideoStorageState(videoId) {
+    const res = await apiFetch(`${API_BASE}/videos/${videoId}/storage-state`);
+    const data = await readJsonResponse(res, 'Failed to load video storage state');
+    if (!res.ok) throw new Error(data.error || 'Failed to load video storage state');
+    return data;
+  },
   async getVideoPlaylists(videoId, options = {}) {
     const key = `video_playlists_${videoId}`;
     const force = !!options.force;

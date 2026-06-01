@@ -419,6 +419,15 @@ function getPlaylistVideos(input: {
   `).all(input.playlistId, ...(input.params || []));
 }
 
+function getActiveVideoPlaylists(videoId: string) {
+  return db.prepare(`
+    SELECT p.* FROM playlists p
+    JOIN playlist_videos pv ON p.id = pv.playlist_id
+    WHERE pv.video_id = ?
+      AND pv.status = 'active'
+  `).all(videoId);
+}
+
 function normalizeYoutubePlaylistSource(value: unknown) {
   if (typeof value !== 'string') return null;
   const input = value.trim();
@@ -1033,13 +1042,19 @@ router.get('/videos/:id/playlists', (req, res) => {
   const videoId = normalizeVideoId(req.params.id);
   if (!videoId) return res.status(400).json({ error: 'Valid videoId is required' });
 
-  const playlists = db.prepare(`
-    SELECT p.* FROM playlists p
-    JOIN playlist_videos pv ON p.id = pv.playlist_id
-    WHERE pv.video_id = ?
-      AND pv.status = 'active'
-  `).all(videoId);
-  res.json(playlists);
+  res.json(getActiveVideoPlaylists(videoId));
+});
+
+router.get('/videos/:id/storage-state', (req, res) => {
+  const videoId = normalizeVideoId(req.params.id);
+  if (!videoId) return res.status(400).json({ error: 'Valid videoId is required' });
+
+  const video = db.prepare('SELECT id FROM videos WHERE id = ?').get(videoId);
+  res.json({
+    videoId,
+    exists: !!video,
+    playlists: getActiveVideoPlaylists(videoId)
+  });
 });
 
 router.get('/summary-settings', (req, res) => {

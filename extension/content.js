@@ -974,8 +974,8 @@
   }
 
   async function ensureCurrentVideoStored(videoId) {
-    const playlists = await window.api.getVideoPlaylists(videoId);
-    if (playlists.length > 0) return playlists[0];
+    const state = await window.api.getVideoStorageState(videoId);
+    if (state.exists) return Array.isArray(state.playlists) ? state.playlists[0] || null : null;
 
     const ungrouped = await getOrCreateUngroupedPlaylist();
     await window.api.addVideoToPlaylist(ungrouped.id, videoId);
