@@ -790,7 +790,7 @@
       const summary = finalized.run;
 
       if (cleanup && !shortfallWarning) {
-        const notFoundIds = Array.from(cleanup.pendingIds).filter(id => !cleanup.attempted.has(id));
+        const notFoundIds = Array.from(cleanup.ids).filter(id => !cleanup.attempted.has(id));
         for (const videoId of notFoundIds) {
           try {
             await withSyncTimeout(

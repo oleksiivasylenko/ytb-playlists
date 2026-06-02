@@ -386,7 +386,16 @@ const playlistVideoSelect = `
   SELECT v.*, pv.sort_order, pv.added_at, pv.status, pv.last_seen_at, pv.missing_since,
          pv.unavailable_since, pv.last_checked_at, pv.youtube_removed_at,
          pv.youtube_cleanup_error, pv.moved_to_playlist_id, pv.moved_at,
+         p.last_synced_at as playlist_last_synced_at,
          mp.name as moved_to_playlist_name, pv.rowid as pv_rowid,
+         CASE
+           WHEN pv.status IN ('removed_by_user', 'moved_to_playlist')
+             AND pv.youtube_removed_at IS NOT NULL
+             AND pv.last_seen_at IS NOT NULL
+             AND julianday(pv.last_seen_at) > julianday(pv.youtube_removed_at)
+             AND (p.last_synced_at IS NULL OR julianday(p.last_synced_at) <= julianday(pv.last_seen_at))
+           THEN 1 ELSE 0
+         END as youtube_cleanup_reappeared,
          CASE WHEN vt.video_id IS NULL THEN 0 ELSE 1 END as has_transcript,
          CASE WHEN vt.segments_json IS NULL OR vt.segments_json = '' THEN 0 ELSE 1 END as has_timestamped_transcript,
          COALESCE(v.transcript_unavailable, 0) as transcript_unavailable,
@@ -397,6 +406,7 @@ const playlistVideoSelect = `
          vt.fetched_at as transcript_fetched_at
   FROM videos v
   JOIN playlist_videos pv ON v.id = pv.video_id
+  JOIN playlists p ON p.id = pv.playlist_id
   LEFT JOIN playlists mp ON mp.id = pv.moved_to_playlist_id
   LEFT JOIN video_transcripts vt ON vt.video_id = v.id
   LEFT JOIN video_summaries vsp ON vsp.video_id = v.id AND vsp.mode = 'plain'
@@ -560,7 +570,16 @@ router.get('/playlists/:id/videos/youtube-cleanup-pending', (req, res) => {
 router.get('/playlists/:id/videos/youtube-cleanup-candidates', (req, res) => {
   const videos = getPlaylistVideos({
     playlistId: req.params.id,
-    whereSql: "AND pv.status IN ('removed_by_user', 'moved_to_playlist')"
+    whereSql: `AND pv.status IN ('removed_by_user', 'moved_to_playlist')
+      AND (
+        pv.youtube_removed_at IS NULL
+        OR (
+          pv.youtube_removed_at IS NOT NULL
+          AND pv.last_seen_at IS NOT NULL
+          AND julianday(pv.last_seen_at) > julianday(pv.youtube_removed_at)
+          AND (p.last_synced_at IS NULL OR julianday(p.last_synced_at) <= julianday(pv.last_seen_at))
+        )
+      )`
   });
 
   res.json(videos);
