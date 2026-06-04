@@ -38,17 +38,13 @@ The intended workflow is to process videos locally first, then sync the result b
 
 ![Linked YouTube playlist](docs/screenshots/linked-youtube-playlist.png)
 
-### YouTube overlay panel
-
-![YouTube overlay panel](docs/screenshots/youtube-overlay-panel.png)
-
 ### Summary page popup
 
-![Summary page](docs/screenshots/summary-page.png)
+<img src="docs/screenshots/summary-page.png" alt="Summary page popup" width="720">
 
 ### Filters and tags
 
-![Filters and tags](docs/screenshots/filters-and-tags.png)
+<img src="docs/screenshots/filters-and-tags.png" alt="Filters and tags" width="520">
 
 ## Architecture
 
