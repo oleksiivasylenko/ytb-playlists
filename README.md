@@ -21,19 +21,34 @@ The goal is simple: make it easy to review, filter, summarize, move, restore, an
 - Generates text/HTML summaries and tags through the paid OpenRouter API. The actual cost depends on the model you choose and how actively you generate summaries or tags. I currently recommend `google/gemini-2.5-flash`, which is what I use for both text and HTML summaries.
 - Exposes settings for models, summary language, prompts, transcript language priority, and preferred tags.
 
+## How It Works
+
+The program starts by syncing a YouTube playlist into a local playlist stored in SQLite. After that first import, daily video management happens inside this app: you can review, filter, summarize, tag, move, skip, restore, or remove videos without depending on YouTube's playlist UI.
+
+Each playlist in the app can work in one of two modes:
+
+- Independent local list - it is managed only inside the app and does not need a YouTube playlist link.
+- Linked YouTube list - it is connected to a YouTube playlist URL and can be synchronized with that playlist.
+
+The intended workflow is to process videos locally first, then sync the result back to YouTube when needed. That makes it possible to reconcile videos that were processed, removed, moved, or reorganized in the app with the original YouTube playlist instead of manually repeating the same cleanup on YouTube.
+
 ## Screenshots
+
+### Linked YouTube playlist
+
+![Linked YouTube playlist](docs/screenshots/linked-youtube-playlist.png)
 
 ### YouTube overlay panel
 
 ![YouTube overlay panel](docs/screenshots/youtube-overlay-panel.png)
 
-### Summary page
+### Summary page popup
 
 ![Summary page](docs/screenshots/summary-page.png)
 
-### Filters and author groups
+### Filters and tags
 
-![Filters and author groups](docs/screenshots/filters-and-author-groups.png)
+![Filters and tags](docs/screenshots/filters-and-tags.png)
 
 ## Architecture
 
