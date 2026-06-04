@@ -218,12 +218,35 @@ h1 {
 
 .tag-suggestion {
   width: 100%;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   border: 0;
   border-radius: 0;
   background: transparent;
   padding: 8px 10px;
   text-align: left;
+}
+
+.tag-suggestion-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-suggestion-count {
+  flex: 0 0 auto;
+  min-width: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  padding: 2px 7px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 14px;
 }
 
 .tag-suggestion.active,

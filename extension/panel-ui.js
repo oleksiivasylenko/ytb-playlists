@@ -216,6 +216,7 @@
   const externalLinkIcon = '<svg class="yt-summary-external-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7"></path><path d="M21 3l-9 9"></path><path d="M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"></path></svg>';
   const REMOVAL_DELAY_MS = 5000;
   const MOVE_DESELECT_HOLD_MS = 1000;
+  const VIDEO_HOVER_DELAY_MS = 500;
   const SYNC_STATUS_DISPLAY_MS = 1500;
   const SYNC_BUSY_STATUS_TTL_MS = 22 * 60 * 1000;
   const AUTO_TRANSCRIPT_STATUS_KEY = 'auto-transcript-progress';
@@ -640,6 +641,42 @@
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  function bindDelayedHoverState(element, classTarget = element) {
+    let hoverTimer = null;
+
+    element.addEventListener('pointerenter', () => {
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        classTarget.classList.add('yt-playlist-alt-hover-ready');
+        hoverTimer = null;
+      }, VIDEO_HOVER_DELAY_MS);
+    });
+
+    element.addEventListener('pointerleave', () => {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+      classTarget.classList.remove('yt-playlist-alt-hover-ready');
+    });
+  }
+
+  function bindDelayedPreview(anchor, video, type) {
+    let previewTimer = null;
+
+    anchor.addEventListener('pointerenter', () => {
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(() => {
+        showPreview(anchor, video, type);
+        previewTimer = null;
+      }, VIDEO_HOVER_DELAY_MS);
+    });
+
+    anchor.addEventListener('pointerleave', () => {
+      clearTimeout(previewTimer);
+      previewTimer = null;
+      scheduleHidePreview();
+    });
+  }
+
   function waitForTransition(element, fallbackMs) {
     return new Promise(resolve => {
       let done = false;
@@ -839,16 +876,26 @@
   }
 
   function getUniqueVideoTags(videos = allVideos) {
+    return getVideoTagCounts(videos).map(item => item.tag);
+  }
+
+  function getVideoTagCounts(videos = allVideos) {
     const tagsByKey = new Map();
     videos.forEach(video => {
+      const videoKeys = new Set();
       getVideoTags(video).forEach(tag => {
         const value = normalizeTagFilterValue(tag);
         const key = value.toLowerCase();
-        if (value && !tagsByKey.has(key)) tagsByKey.set(key, value);
+        if (!value || videoKeys.has(key)) return;
+        videoKeys.add(key);
+
+        const existing = tagsByKey.get(key);
+        if (existing) existing.count += 1;
+        else tagsByKey.set(key, { tag: value, count: 1 });
       });
     });
 
-    return Array.from(tagsByKey.values()).sort((a, b) => a.localeCompare(b));
+    return Array.from(tagsByKey.values()).sort((a, b) => a.tag.localeCompare(b.tag));
   }
 
   function getTagSuggestionVideos() {
@@ -880,7 +927,8 @@
     const normalized = normalizeTagFilterValue(value);
     if (!normalized) return '';
     const key = normalized.toLowerCase();
-    return getUniqueVideoTags(getTagSuggestionVideos()).find(tag => tag.toLowerCase() === key) || normalized;
+    const match = getVideoTagCounts(getTagSuggestionVideos()).find(item => item.tag.toLowerCase() === key);
+    return match ? match.tag : normalized;
   }
 
   function appendHighlightedTagText(element, tag, query) {
@@ -947,25 +995,36 @@
       return;
     }
 
-    const suggestions = getUniqueVideoTags(getTagSuggestionVideos())
-      .filter(tag => !selectedKeys.has(tag.toLowerCase()))
-      .filter(tag => tag.toLowerCase().includes(queryKey))
+    const suggestions = getVideoTagCounts(getTagSuggestionVideos())
+      .filter(item => !selectedKeys.has(getTagFilterKey(item.tag)))
+      .filter(item => item.tag.toLowerCase().includes(queryKey))
       .slice(0, 80);
 
     tagSuggestions.innerHTML = '';
     tagSuggestions.classList.toggle('yt-tag-suggestions--open', suggestions.length > 0);
-    suggestions.forEach(tag => {
+    suggestions.forEach((suggestion, index) => {
       const item = document.createElement('button');
       item.type = 'button';
       item.className = 'yt-tag-suggestion';
-      item.dataset.tag = tag;
+      item.dataset.tag = suggestion.tag;
       item.setAttribute('role', 'option');
       item.setAttribute('aria-selected', 'false');
-      appendHighlightedTagText(item, tag, query);
-      item.addEventListener('mouseenter', () => setActiveTagSuggestion(suggestions.indexOf(tag)));
+      item.setAttribute('aria-label', `${suggestion.tag}, ${suggestion.count} videos`);
+
+      const label = document.createElement('span');
+      label.className = 'yt-tag-suggestion-label';
+      appendHighlightedTagText(label, suggestion.tag, query);
+
+      const count = document.createElement('span');
+      count.className = 'yt-tag-suggestion-count';
+      count.textContent = String(suggestion.count);
+
+      item.appendChild(label);
+      item.appendChild(count);
+      item.addEventListener('mouseenter', () => setActiveTagSuggestion(index));
       item.addEventListener('mousedown', event => {
         event.preventDefault();
-        addTagFilter(tag);
+        addTagFilter(suggestion.tag);
       });
       tagSuggestions.appendChild(item);
     });
@@ -2554,6 +2613,7 @@
     moveBtn.setAttribute('aria-label', moveBtn.title);
     moveBtn.disabled = movableVideos.length === 0;
     moveBtn.onclick = event => handleMoveVideos(event, videos);
+    bindDelayedHoverState(moveBtn);
 
     const deleteBtn = pendingCount > 0 || removableVideos.length > 0 ? document.createElement('button') : null;
     if (deleteBtn) {
@@ -2568,6 +2628,7 @@
         }
         requestVideoRemovals(removableVideos, 'group');
       };
+      bindDelayedHoverState(deleteBtn);
     }
 
     header.appendChild(headerLeft);
@@ -2586,6 +2647,7 @@
     };
 
     videos.forEach(video => content.appendChild(createVideoElement(video)));
+    bindDelayedHoverState(header);
     group.appendChild(header);
     group.appendChild(content);
     return group;
@@ -2718,6 +2780,7 @@
       restoreBtn.title = 'Restore to this list';
       restoreBtn.setAttribute('aria-label', restoreBtn.title);
       restoreBtn.onclick = event => handleRestoreVideo(event, video);
+      bindDelayedHoverState(restoreBtn);
     }
 
     const restoreMove = isRestorableVideo(video);
@@ -2737,6 +2800,7 @@
     moveBtn.setAttribute('aria-label', moveBtn.title);
     moveBtn.disabled = !isMovableVideo(video);
     bindMoveArrowButton(moveBtn, video);
+    bindDelayedHoverState(moveBtn);
 
     const removeBtn = isYoutubeCleanupPending(video) || isRemovableVideo(video)
       ? document.createElement('button')
@@ -2747,6 +2811,7 @@
       removeBtn.title = 'Mark removed from YouTube';
       removeBtn.setAttribute('aria-label', removeBtn.title);
       removeBtn.onclick = event => handleMarkYoutubeCleanedClick(event, video);
+      bindDelayedHoverState(removeBtn);
     } else if (removeBtn) {
       removeBtn.className = 'yt-playlist-alt-video-remove';
       removeBtn.innerHTML = '&#10005;';
@@ -2756,6 +2821,7 @@
         event.stopPropagation();
         requestVideoRemoval(video, 'manual');
       };
+      bindDelayedHoverState(removeBtn);
     }
 
     const transcriptBtn = createTranscriptButton(video, pendingRecord);
@@ -2784,6 +2850,7 @@
         cancelPendingRemoval(video.id);
         renderVideos();
       };
+      bindDelayedHoverState(cancelBtn);
 
       overlay.appendChild(message);
       overlay.appendChild(countBadge);
@@ -2791,16 +2858,25 @@
       item.appendChild(overlay);
     }
 
-    item.appendChild(imgWrap);
-    item.appendChild(info);
-    if (restoreBtn) item.appendChild(restoreBtn);
-    item.appendChild(moveBtn);
-    item.appendChild(transcriptBtn);
-    item.appendChild(summaryBtn);
-    item.appendChild(tagBtn);
-    if (removeBtn) item.appendChild(removeBtn);
+    const actions = document.createElement('div');
+    actions.className = 'yt-playlist-alt-video-actions';
+    if (restoreBtn) actions.appendChild(restoreBtn);
+    actions.appendChild(moveBtn);
+    actions.appendChild(transcriptBtn);
+    actions.appendChild(summaryBtn);
+    actions.appendChild(tagBtn);
+    if (removeBtn) actions.appendChild(removeBtn);
+
+    const main = document.createElement('div');
+    main.className = 'yt-playlist-alt-video-main';
+    main.appendChild(imgWrap);
+    main.appendChild(info);
+    bindDelayedHoverState(main, item);
+
+    item.appendChild(main);
+    item.appendChild(actions);
     function isVideoActionTarget(target) {
-      return !!(target && target.closest && target.closest('button, .yt-playlist-alt-summary-actions'));
+      return !!(target && target.closest && target.closest('button, .yt-playlist-alt-summary-actions, .yt-playlist-alt-video-actions'));
     }
 
     function openVideoItem(newTab) {
@@ -2813,23 +2889,23 @@
       sendRuntimeMessage({ action: 'openYoutubeVideo', videoId: video.id, newTab });
     }
 
-    item.addEventListener('click', event => {
+    main.addEventListener('click', event => {
       if (isVideoActionTarget(event.target)) return;
       if (event.button !== 0) return;
       openVideoItem(event.ctrlKey || event.metaKey);
     });
-    item.addEventListener('mousedown', event => {
+    main.addEventListener('mousedown', event => {
       if (isVideoActionTarget(event.target)) return;
       if (event.button !== 1) return;
       event.preventDefault();
     });
-    item.addEventListener('mouseup', event => {
+    main.addEventListener('mouseup', event => {
       if (isVideoActionTarget(event.target)) return;
       if (event.button !== 1) return;
       event.preventDefault();
       openVideoItem(true);
     });
-    item.addEventListener('auxclick', event => {
+    main.addEventListener('auxclick', event => {
       if (event.button === 1) event.preventDefault();
     });
     return item;
@@ -2847,9 +2923,9 @@
     transcriptBtn.setAttribute('aria-label', transcriptBtn.title);
     transcriptBtn.innerHTML = transcriptLoading ? '<span class="yt-transcript-spinner"></span>' : 'T';
     transcriptBtn.onclick = event => handleTranscriptClick(event, video);
+    bindDelayedHoverState(transcriptBtn);
     if (!pendingRecord && transcriptReady) {
-      transcriptBtn.addEventListener('mouseenter', () => showPreview(transcriptBtn, video, 'transcript'));
-      transcriptBtn.addEventListener('mouseleave', scheduleHidePreview);
+      bindDelayedPreview(transcriptBtn, video, 'transcript');
     }
 
     return transcriptBtn;
@@ -2887,6 +2963,7 @@
     wrap.classList.add(summaryReady ? 'yt-playlist-alt-summary-actions--ready' : 'yt-playlist-alt-summary-actions--missing');
     if (summaryLoading) wrap.classList.add('yt-playlist-alt-summary-actions--loading');
     if (summaryBlocked) wrap.classList.add('yt-playlist-alt-summary-actions--disabled');
+    bindDelayedHoverState(wrap);
 
     actions.forEach(config => {
       const summaryBtn = document.createElement('button');
@@ -2908,8 +2985,7 @@
     });
 
     if (!pendingRecord && summaryReady) {
-      wrap.addEventListener('mouseenter', () => showPreview(wrap, video, 'summary'));
-      wrap.addEventListener('mouseleave', scheduleHidePreview);
+      bindDelayedPreview(wrap, video, 'summary');
     }
 
     return wrap;
@@ -2930,6 +3006,7 @@
     tagBtn.innerHTML = tagLoading ? '<span class="yt-transcript-spinner"></span>' : 'Tag';
     tagBtn.onclick = event => handleTagClick(event, video);
     if (pendingRecord) tagBtn.disabled = true;
+    bindDelayedHoverState(tagBtn);
 
     return tagBtn;
   }
@@ -2940,6 +3017,7 @@
 
     const wrap = document.createElement('div');
     wrap.className = 'yt-playlist-alt-tags';
+    bindDelayedHoverState(wrap);
 
     tags.forEach((tag, index) => {
       const chip = document.createElement('span');

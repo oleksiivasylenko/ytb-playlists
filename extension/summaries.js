@@ -108,15 +108,25 @@
   }
 
   function getUniqueTags(videos = summaries) {
+    return getTagCounts(videos).map(item => item.tag);
+  }
+
+  function getTagCounts(videos = summaries) {
     const tagsByKey = new Map();
     videos.forEach(video => {
+      const videoKeys = new Set();
       getVideoTags(video).forEach(tag => {
         const value = normalizeTag(tag);
         const key = value.toLowerCase();
-        if (value && !tagsByKey.has(key)) tagsByKey.set(key, value);
+        if (!value || videoKeys.has(key)) return;
+        videoKeys.add(key);
+
+        const existing = tagsByKey.get(key);
+        if (existing) existing.count += 1;
+        else tagsByKey.set(key, { tag: value, count: 1 });
       });
     });
-    return Array.from(tagsByKey.values()).sort((a, b) => a.localeCompare(b));
+    return Array.from(tagsByKey.values()).sort((a, b) => a.tag.localeCompare(b.tag));
   }
 
   function matchesTagFilters(video) {
@@ -320,7 +330,8 @@
     if (!query) return;
 
     const key = query.toLowerCase();
-    const actual = getUniqueTags(getFilteredSummaries()).find(tag => tag.toLowerCase() === key) || query;
+    const match = getTagCounts(getFilteredSummaries()).find(item => item.tag.toLowerCase() === key);
+    const actual = match ? match.tag : query;
     if (selectedTagFilters.some(tag => getTagKey(tag) === getTagKey(actual))) {
       tagFilterInput.value = '';
       hideTagSuggestions();
@@ -344,25 +355,36 @@
 
     const selected = new Set(selectedTagFilters.map(getTagKey));
     const queryKey = query.toLowerCase();
-    const suggestions = getUniqueTags(getFilteredSummaries())
-      .filter(tag => !selected.has(tag.toLowerCase()))
-      .filter(tag => tag.toLowerCase().includes(queryKey))
+    const suggestions = getTagCounts(getFilteredSummaries())
+      .filter(item => !selected.has(getTagKey(item.tag)))
+      .filter(item => item.tag.toLowerCase().includes(queryKey))
       .slice(0, 80);
 
     tagSuggestions.innerHTML = '';
     tagSuggestions.classList.toggle('open', suggestions.length > 0);
-    suggestions.forEach((tag, index) => {
+    suggestions.forEach((suggestion, index) => {
       const item = document.createElement('button');
       item.type = 'button';
       item.className = 'tag-suggestion';
-      item.dataset.tag = tag;
-      item.textContent = tag;
+      item.dataset.tag = suggestion.tag;
       item.setAttribute('role', 'option');
       item.setAttribute('aria-selected', 'false');
+      item.setAttribute('aria-label', `${suggestion.tag}, ${suggestion.count} videos`);
+
+      const label = document.createElement('span');
+      label.className = 'tag-suggestion-label';
+      label.textContent = suggestion.tag;
+
+      const count = document.createElement('span');
+      count.className = 'tag-suggestion-count';
+      count.textContent = String(suggestion.count);
+
+      item.appendChild(label);
+      item.appendChild(count);
       item.addEventListener('mouseenter', () => setActiveTagSuggestion(index));
       item.addEventListener('mousedown', event => {
         event.preventDefault();
-        addTagFilter(tag);
+        addTagFilter(suggestion.tag);
       });
       tagSuggestions.appendChild(item);
     });

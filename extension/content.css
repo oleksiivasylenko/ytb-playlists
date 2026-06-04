@@ -542,7 +542,10 @@
 .yt-tag-suggestion {
   width: 100%;
   min-height: 38px;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   background: transparent;
   color: #f1f1f1;
   border: 0;
@@ -550,6 +553,26 @@
   text-align: left;
   cursor: pointer;
   font: 600 13px/1.35 "Roboto", "Arial", sans-serif;
+}
+
+.yt-tag-suggestion-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yt-tag-suggestion-count {
+  flex: 0 0 auto;
+  min-width: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #bdbdbd;
+  padding: 2px 7px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 14px;
 }
 
 .yt-tag-suggestion:hover,
@@ -664,7 +687,7 @@
   cursor: pointer;
 }
 
-.yt-playlist-alt-group-header:hover {
+.yt-playlist-alt-group-header.yt-playlist-alt-hover-ready {
   background: #2a2a2a;
 }
 
@@ -701,12 +724,31 @@
   display: flex;
   padding: 8px 16px;
   gap: 12px;
-  cursor: pointer;
+  cursor: default;
   align-items: flex-start;
 }
 
-.yt-playlist-alt-video:hover {
+.yt-playlist-alt-video.yt-playlist-alt-hover-ready {
   background: #272727;
+}
+
+.yt-playlist-alt-video-actions {
+  align-self: stretch;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: -8px -16px -8px 0;
+  padding: 8px 16px 8px 0;
+  cursor: default;
+}
+
+.yt-playlist-alt-video-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
 }
 
 .yt-playlist-alt-video img {
@@ -755,7 +797,7 @@
   color: #7bd88f;
 }
 
-.yt-playlist-alt-video-restore:hover {
+.yt-playlist-alt-video-restore.yt-playlist-alt-hover-ready {
   background: rgba(123, 216, 143, 0.18);
   color: #d8ffe0;
   border-color: rgba(123, 216, 143, 0.55);
@@ -770,20 +812,20 @@
   line-height: 1.15;
 }
 
-.yt-playlist-alt-video-move:hover {
+.yt-playlist-alt-video-move.yt-playlist-alt-hover-ready {
   background: rgba(138, 180, 248, 0.18);
   color: #d8e7ff;
   border-color: rgba(138, 180, 248, 0.55);
 }
 
-.yt-playlist-alt-video-move--suppress-hover:hover {
+.yt-playlist-alt-video-move--suppress-hover.yt-playlist-alt-hover-ready {
   background: transparent;
   color: #8ab4f8;
   border-color: transparent;
 }
 
 .yt-playlist-alt-video-move--selected,
-.yt-playlist-alt-video-move--selected:hover {
+.yt-playlist-alt-video-move--selected.yt-playlist-alt-hover-ready {
   background: rgba(138, 180, 248, 0.26);
   color: #fff;
   border-color: #8ab4f8;
@@ -798,7 +840,7 @@
   color: #ff6b6b;
 }
 
-.yt-playlist-alt-video-remove:hover {
+.yt-playlist-alt-video-remove.yt-playlist-alt-hover-ready {
   background: #e05252;
   color: #fff;
   border-color: #e05252;
@@ -856,7 +898,7 @@
   border-left: 1px solid rgba(255, 255, 255, 0.22);
 }
 
-.yt-playlist-alt-summary-actions .yt-playlist-alt-summary-btn:hover {
+.yt-playlist-alt-summary-actions.yt-playlist-alt-hover-ready .yt-playlist-alt-summary-btn {
   background: transparent;
 }
 
@@ -864,7 +906,7 @@
   border: 3px dotted #ff2f2f;
 }
 
-.yt-playlist-alt-summary-actions--missing:hover {
+.yt-playlist-alt-summary-actions--missing.yt-playlist-alt-hover-ready {
   background: rgba(255, 47, 47, 0.12);
 }
 
@@ -873,7 +915,7 @@
   background: rgba(53, 200, 90, 0.16);
 }
 
-.yt-playlist-alt-summary-actions--ready:hover {
+.yt-playlist-alt-summary-actions--ready.yt-playlist-alt-hover-ready {
   background: rgba(53, 200, 90, 0.28);
 }
 
@@ -914,9 +956,9 @@
   border: 3px dotted #ff2f2f;
 }
 
-.yt-playlist-alt-transcript-btn--missing:hover,
-.yt-playlist-alt-summary-btn--missing:hover,
-.yt-playlist-alt-tags-btn--missing:hover {
+.yt-playlist-alt-transcript-btn--missing.yt-playlist-alt-hover-ready,
+.yt-playlist-alt-summary-actions--missing.yt-playlist-alt-hover-ready .yt-playlist-alt-summary-btn--missing,
+.yt-playlist-alt-tags-btn--missing.yt-playlist-alt-hover-ready {
   background: rgba(255, 47, 47, 0.18);
 }
 
@@ -927,10 +969,14 @@
   background: rgba(53, 200, 90, 0.16);
 }
 
-.yt-playlist-alt-transcript-btn--ready:hover,
-.yt-playlist-alt-summary-btn--ready:hover,
-.yt-playlist-alt-tags-btn--ready:hover {
+.yt-playlist-alt-transcript-btn--ready.yt-playlist-alt-hover-ready,
+.yt-playlist-alt-summary-actions--ready.yt-playlist-alt-hover-ready .yt-playlist-alt-summary-btn--ready,
+.yt-playlist-alt-tags-btn--ready.yt-playlist-alt-hover-ready {
   background: rgba(53, 200, 90, 0.28);
+}
+
+.yt-playlist-alt-summary-actions.yt-playlist-alt-hover-ready .yt-playlist-alt-summary-btn {
+  background: transparent;
 }
 
 .yt-playlist-alt-transcript-btn--loading,
@@ -956,12 +1002,12 @@
   overflow: hidden;
 }
 
-.yt-playlist-alt-tags:hover {
+.yt-playlist-alt-tags.yt-playlist-alt-hover-ready {
   max-height: none;
   overflow: visible;
 }
 
-.yt-playlist-alt-tags:not(:hover) .yt-playlist-alt-tag--extra {
+.yt-playlist-alt-tags:not(.yt-playlist-alt-hover-ready) .yt-playlist-alt-tag--extra {
   display: none;
 }
 
@@ -1279,7 +1325,7 @@
   border-left: 3px solid #3ea6ff;
 }
 
-.yt-playlist-alt-video--playing:hover {
+.yt-playlist-alt-video--playing.yt-playlist-alt-hover-ready {
   background: #1e3040;
 }
 
@@ -1333,7 +1379,7 @@
   pointer-events: none;
 }
 
-.yt-playlist-alt-video--pending-removal:hover {
+.yt-playlist-alt-video--pending-removal.yt-playlist-alt-hover-ready {
   background: #331f1f;
 }
 
@@ -1399,7 +1445,7 @@
   font-family: "Roboto", "Arial", sans-serif;
 }
 
-.yt-removal-cancel-btn:hover {
+.yt-removal-cancel-btn.yt-playlist-alt-hover-ready {
   background: #444;
   border-color: #888;
 }
