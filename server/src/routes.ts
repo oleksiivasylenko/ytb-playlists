@@ -4,6 +4,7 @@ import { fetchVideoMetadata, type VideoMetadata } from './youtube';
 import { addTranscriptEventClient, ensureTranscript, getTranscript, getTranscriptStatus, TranscriptUnavailableError } from './transcripts';
 import {
   addSummaryEventClient,
+  askVideoQuestion,
   ensureTags,
   ensureSummary,
   getSummary,
@@ -12,7 +13,8 @@ import {
   getTags,
   getTagStatus,
   normalizeSummaryMode,
-  updateSummarySettings
+  updateSummarySettings,
+  type AskComment
 } from './summaries';
 
 const router = Router();
@@ -88,6 +90,26 @@ function normalizeLanguage(value: unknown) {
   if (typeof value !== 'string') return null;
   const language = value.trim();
   return languageRegex.test(language) ? language : null;
+}
+
+function normalizeAskText(value: unknown, maxLength: number) {
+  if (typeof value !== 'string') return '';
+  return value.replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function normalizeAskComments(value: unknown) {
+  if (!Array.isArray(value)) return [] as AskComment[];
+
+  return value.map(raw => {
+    const item = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+    return {
+      author: normalizeAskText(item.author, 240),
+      text: normalizeAskText(item.text, 12000),
+      publishedTime: normalizeAskText(item.publishedTime, 120),
+      likes: normalizeAskText(item.likes, 80),
+      reply: item.reply === true
+    };
+  }).filter(comment => comment.text);
 }
 
 function isKnownTitle(title: unknown) {
@@ -1090,12 +1112,64 @@ router.put('/summary-settings', (req, res) => {
     summaryMode: req.body.summaryMode,
     transcriptLanguages: req.body.transcriptLanguages,
     tagPrompt: req.body.tagPrompt,
+    askModel: req.body.askModel,
+    askPrompt: req.body.askPrompt,
     preferredTags: req.body.preferredTags,
     tagDisplayLimit: req.body.tagDisplayLimit,
     autoTranscriptEnabled: req.body.autoTranscriptEnabled,
     autoSummaryEnabled: req.body.autoSummaryEnabled,
     autoTagsEnabled: req.body.autoTagsEnabled
   }));
+});
+
+router.post('/videos/:id/ask', async (req, res) => {
+  const videoId = normalizeVideoId(req.params.id);
+  if (!videoId) return res.status(400).json({ error: 'Valid videoId is required' });
+
+  const question = normalizeAskText(req.body.question, 4000);
+  if (!question) return res.status(400).json({ error: 'Question is required' });
+
+  const includeTranscript = req.body.includeTranscript === true;
+  const comments = normalizeAskComments(req.body.comments);
+  const expectedCommentCountValue = Number(req.body.expectedCommentCount);
+  const expectedCommentCount = Number.isInteger(expectedCommentCountValue) && expectedCommentCountValue >= 0
+    ? expectedCommentCountValue
+    : null;
+
+  try {
+    let transcriptText = typeof req.body.transcript === 'string'
+      ? req.body.transcript.slice(0, 2_000_000)
+      : '';
+
+    if (includeTranscript && !transcriptText.trim()) {
+      const transcript = await ensureTranscript(videoId);
+      transcriptText = transcript.timestamped_text || transcript.text;
+    }
+
+    const result = await askVideoQuestion({
+      videoId,
+      question,
+      comments,
+      includeTranscript,
+      transcript: transcriptText,
+      title: normalizeAskText(req.body.title, 500),
+      author: normalizeAskText(req.body.author, 300),
+      expectedCommentCount
+    });
+
+    res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to ask about video';
+    if (error instanceof TranscriptUnavailableError) {
+      return res.status(409).json({
+        error: message,
+        transcriptUnavailable: true,
+        transcriptUnavailableAt: error.unavailableAt,
+        transcriptUnavailableReason: error.reason
+      });
+    }
+    res.status(message.includes('OPENROUTER_API_KEY') || message.includes('FETCHTRANSCRIPT_API_KEY') ? 500 : 502).json({ error: message });
+  }
 });
 
 router.get('/videos/:id/summary/status', (req, res) => {

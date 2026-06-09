@@ -7,6 +7,7 @@
   document.getElementById('yt-qs-wrapper')?.remove();
   document.getElementById('yt-qs-dropdown')?.remove();
   document.getElementById('ytb-actions-wrapper')?.remove();
+  document.getElementById('ytb-ask-panel')?.remove();
 
   let extensionContextAlive = true;
   let quickSaveObserver = null;
@@ -18,6 +19,7 @@
   const watchControlsRetryIds = new Set();
   let panelApi = null;
   let activePlaylistSync = null;
+  let activeCommentsSync = null;
   const ytbPreview = window.ytbPreview.create({ id: 'ytb-actions-preview', maxWidth: 520, minWidth: 300, positionMode: 'document' });
   const externalLinkIcon = '<svg class="yt-summary-external-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7"></path><path d="M21 3l-9 9"></path><path d="M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"></path></svg>';
   const SYNC_PROGRESS_STATUS_KEY = 'playlist-sync-progress';
@@ -25,6 +27,10 @@
   const YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY = 'youtubeCleanupReviewPrompt';
   const SYNC_MAX_DURATION_MS = 20 * 60 * 1000;
   const SYNC_IDLE_TIMEOUT_MS = 75 * 1000;
+  const COMMENTS_SYNC_MAX_DURATION_MS = 3 * 60 * 1000;
+  const COMMENTS_SYNC_IDLE_TIMEOUT_MS = 18 * 1000;
+  const COMMENTS_SYNC_PROGRESS_WAIT_MS = 6500;
+  const COMMENTS_SYNC_PROGRESS_POLL_MS = 500;
 
   function isExtensionContextError(error) {
     const message = String(error && (error.message || error) || '');
@@ -70,12 +76,14 @@
       panelApi = null;
     }
 
+    stopActiveCommentsSync('Comment sync stopped.', { silent: true });
     ytbPreview.destroy();
     document.getElementById('yt-playlist-alt-toggle')?.remove();
     document.getElementById('yt-playlist-alt-panel')?.remove();
     document.getElementById('yt-qs-wrapper')?.remove();
     document.getElementById('yt-qs-dropdown')?.remove();
     document.getElementById('ytb-actions-wrapper')?.remove();
+    document.getElementById('ytb-ask-panel')?.remove();
   }
 
   function cleanupContentScript() {
@@ -951,6 +959,674 @@
       });
   }
 
+  function createCommentsSyncStopError(message, options = {}) {
+    const error = new Error(message || 'Comment sync stopped.');
+    error.isCommentsSyncStop = true;
+    error.silent = !!options.silent;
+    return error;
+  }
+
+  function startCommentsSyncContext(videoId) {
+    const now = Date.now();
+    const context = {
+      videoId,
+      cancelled: false,
+      cancelMessage: '',
+      silentStop: false,
+      startedAt: now,
+      deadlineAt: now + COMMENTS_SYNC_MAX_DURATION_MS,
+      lastProgressAt: now
+    };
+    activeCommentsSync = context;
+    return context;
+  }
+
+  function stopActiveCommentsSync(message = 'Comment sync stopped.', options = {}) {
+    removeCommentsSyncFloatingStop();
+    if (!activeCommentsSync || activeCommentsSync.cancelled) return false;
+    activeCommentsSync.cancelled = true;
+    activeCommentsSync.cancelMessage = message;
+    activeCommentsSync.silentStop = !!options.silent;
+    return true;
+  }
+
+  function assertCommentsSyncCanContinue(context) {
+    if (!context || activeCommentsSync !== context) {
+      throw createCommentsSyncStopError('Comment sync stopped.');
+    }
+
+    if (context.cancelled) {
+      throw createCommentsSyncStopError(context.cancelMessage || 'Comment sync stopped.', {
+        silent: context.silentStop
+      });
+    }
+
+    const videoId = getVideoIdFromUrl();
+    if (!videoId || videoId !== context.videoId) {
+      throw createCommentsSyncStopError('Comment sync stopped because this tab opened a different video.');
+    }
+
+    const now = Date.now();
+    if (now > context.deadlineAt) {
+      throw createCommentsSyncStopError('Comment sync timed out after 3 minutes.');
+    }
+
+    if (now - context.lastProgressAt > COMMENTS_SYNC_IDLE_TIMEOUT_MS) {
+      throw createCommentsSyncStopError('Comment sync stopped because YouTube did not load more comments.');
+    }
+  }
+
+  function markCommentsSyncProgress(context) {
+    if (context) context.lastProgressAt = Date.now();
+  }
+
+  function parseCompactCount(value) {
+    const text = normalizeDomText(value);
+    if (!text) return null;
+
+    const match = text.replace(/\u00a0/g, ' ').match(/([0-9][0-9\s.,]*)\s*([kmb])?/i);
+    if (!match) return null;
+
+    const rawNumber = match[1].replace(/\s/g, '');
+    const normalized = rawNumber.includes('.') && rawNumber.includes(',')
+      ? rawNumber.replace(/,/g, '')
+      : rawNumber.replace(',', '.');
+    const number = Number(normalized);
+    if (!Number.isFinite(number)) return null;
+
+    const lowerText = text.toLowerCase();
+    const multiplier = match[2]
+      ? { k: 1000, m: 1000000, b: 1000000000 }[match[2].toLowerCase()] || 1
+      : /(тис|тыс|thousand)/i.test(lowerText)
+      ? 1000
+      : /(млн|million)/i.test(lowerText)
+      ? 1000000
+      : /(млрд|billion)/i.test(lowerText)
+      ? 1000000000
+      : 1;
+    return Math.max(0, Math.round(number * multiplier));
+  }
+
+  function getExpectedCommentCount() {
+    const commentsRoot = document.querySelector('ytd-comments#comments, ytd-comments');
+    if (!commentsRoot) return null;
+
+    const nodes = Array.from(commentsRoot.querySelectorAll([
+      'ytd-comments-header-renderer #count .count-text',
+      'ytd-comments-header-renderer #count',
+      'ytd-comments-header-renderer h2'
+    ].join(',')));
+
+    for (const node of nodes) {
+      const count = parseCompactCount(node.textContent || '');
+      if (count !== null) return count;
+    }
+
+    return null;
+  }
+
+  function collectLoadedComments() {
+    const comments = [];
+    const seen = new Set();
+    const threads = Array.from(document.querySelectorAll('ytd-comment-thread-renderer, yt-comment-thread-renderer'));
+
+    threads.forEach(thread => {
+      const models = Array.from(thread.querySelectorAll('ytd-comment-view-model, yt-comment-view-model'));
+      models.forEach((model, modelIndex) => {
+        const textNode = model.querySelector('#content-text, yt-attributed-string#content-text');
+        const text = normalizeDomText(textNode && (textNode.innerText || textNode.textContent));
+        if (!text) return;
+
+        const authorNode = model.querySelector('#author-text, #author-text span');
+        const thumbnailButton = model.querySelector('#author-thumbnail-button');
+        const author = normalizeDomText(
+          (authorNode && (authorNode.textContent || authorNode.getAttribute('aria-label'))) ||
+          (thumbnailButton && thumbnailButton.getAttribute('aria-label')) ||
+          ''
+        );
+        const publishedTime = normalizeDomText(model.querySelector('#published-time-text')?.textContent || '');
+        const likes = normalizeDomText(model.querySelector('#vote-count-middle')?.textContent || '');
+        const reply = modelIndex > 0 || !!model.closest('ytd-comment-replies-renderer, yt-sub-thread');
+        const key = `${author}|${publishedTime}|${text}`;
+        if (seen.has(key)) return;
+
+        seen.add(key);
+        comments.push({ author, text, publishedTime, likes, reply });
+      });
+    });
+
+    return comments;
+  }
+
+  function getHiddenReplyCount() {
+    const commentsRoot = findCommentsSection();
+    if (!commentsRoot) return 0;
+
+    const buttons = Array.from(commentsRoot.querySelectorAll([
+      'ytd-comment-replies-renderer #more-replies button',
+      'ytd-comment-replies-renderer #more-replies-sub-thread button',
+      'ytd-comment-replies-renderer .show-replies-button button',
+      'yt-sub-thread button[aria-label]'
+    ].join(',')));
+    const seen = new Set();
+    let total = 0;
+
+    buttons.forEach(button => {
+      const key = button.closest('ytd-button-renderer, yt-sub-thread, .show-replies-button') || button;
+      if (seen.has(key)) return;
+      if (button.closest('[hidden]')) return;
+
+      const rect = button.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      const text = normalizeDomText(
+        button.getAttribute('aria-label') ||
+        button.textContent ||
+        button.closest('ytd-button-renderer, yt-sub-thread')?.getAttribute('aria-label') ||
+        ''
+      );
+      if (!text) return;
+      if (/(hide|show less|less|схов|прихов|скры|скрыть)/i.test(text)) return;
+      if (!/(repl|відпов|ответ)/i.test(text)) return;
+
+      const count = parseCompactCount(text);
+      if (!Number.isInteger(count) || count <= 0) return;
+
+      seen.add(key);
+      total += count;
+    });
+
+    return total;
+  }
+
+  function getLoadedCommentCount() {
+    return collectLoadedComments().length;
+  }
+
+  function findCommentsSection() {
+    return document.querySelector('ytd-comments#comments, ytd-comments');
+  }
+
+  function scrollTowardComments(context) {
+    assertCommentsSyncCanContinue(context);
+    const commentsSection = findCommentsSection();
+    if (commentsSection && getLoadedCommentCount() === 0) {
+      const sectionTop = commentsSection.getBoundingClientRect().top + window.scrollY;
+      const targetTop = Math.min(sectionTop + Math.floor(window.innerHeight * 0.65), getScrollMetrics().scrollHeight);
+      scrollToPosition(targetTop);
+      return;
+    }
+
+    scrollDownForSync();
+  }
+
+  function getCommentSyncStats() {
+    const comments = collectLoadedComments();
+    const hiddenReplies = getHiddenReplyCount();
+    return {
+      comments,
+      hiddenReplies,
+      expected: getExpectedCommentCount(),
+      accounted: comments.length + hiddenReplies
+    };
+  }
+
+  function formatCommentsCount(loaded, expected, hiddenReplies = 0) {
+    if (expected === 0) return 'No comments';
+    if (Number.isInteger(expected)) {
+      const hidden = hiddenReplies > 0 ? ` + ${hiddenReplies} hidden replies` : '';
+      return `Loaded ${loaded}${hidden}/${expected} comments`;
+    }
+    const hidden = hiddenReplies > 0 ? ` (+${hiddenReplies} hidden replies)` : '';
+    return `Loaded ${loaded} comments${hidden}`;
+  }
+
+  function getAskPanel() {
+    return document.getElementById('ytb-ask-panel');
+  }
+
+  function setAskStatus(panel, text, state = '') {
+    const status = panel && panel.querySelector('.ytb-ask-status');
+    if (!status) return;
+    status.textContent = text || '';
+    status.className = state ? `ytb-ask-status ytb-ask-status--${state}` : 'ytb-ask-status';
+  }
+
+  function createAskHistoryEntry(panel, question) {
+    const history = panel && panel.querySelector('.ytb-ask-history');
+    if (!history) return null;
+
+    const item = document.createElement('div');
+    item.className = 'ytb-ask-history-item';
+
+    const questionEl = document.createElement('div');
+    questionEl.className = 'ytb-ask-history-question';
+    questionEl.textContent = question;
+
+    const metaEl = document.createElement('div');
+    metaEl.className = 'ytb-ask-history-meta';
+    metaEl.textContent = 'Preparing context...';
+
+    const answerEl = document.createElement('div');
+    answerEl.className = 'ytb-ask-history-answer ytb-ask-history-answer--busy';
+    answerEl.textContent = 'Preparing context...';
+
+    item.appendChild(questionEl);
+    item.appendChild(metaEl);
+    item.appendChild(answerEl);
+    history.appendChild(item);
+    item.scrollIntoView({ block: 'nearest' });
+
+    return { item, metaEl, answerEl };
+  }
+
+  function updateAskHistoryEntry(entry, text, state = '', meta = '') {
+    if (!entry || !entry.answerEl) return;
+    entry.answerEl.textContent = text || '';
+    entry.answerEl.className = state
+      ? `ytb-ask-history-answer ytb-ask-history-answer--${state}`
+      : 'ytb-ask-history-answer';
+    if (entry.metaEl && meta) {
+      entry.metaEl.textContent = meta;
+      entry.metaEl.className = state === 'error'
+        ? 'ytb-ask-history-meta ytb-ask-history-meta--error'
+        : 'ytb-ask-history-meta';
+    }
+    entry.item?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function updateAskModeLabel(panel) {
+    const checkbox = panel && panel.querySelector('.ytb-ask-mode-checkbox');
+    const label = panel && panel.querySelector('.ytb-ask-mode-text');
+    if (!checkbox || !label) return;
+    label.textContent = checkbox.checked ? 'video+comments' : 'only comments';
+  }
+
+  function updateAskCommentStats(panel) {
+    const stats = getCommentSyncStats();
+    const counter = panel && panel.querySelector('.ytb-ask-comments-count');
+    if (counter) counter.textContent = formatCommentsCount(stats.comments.length, stats.expected, stats.hiddenReplies);
+    return stats;
+  }
+
+  function isCommentsSyncComplete(stats) {
+    return stats.expected === 0 || (Number.isInteger(stats.expected) && stats.accounted >= stats.expected);
+  }
+
+  function hasCommentsSyncProgress(stats, previous) {
+    return stats.comments.length > previous.comments ||
+      stats.hiddenReplies > previous.hiddenReplies ||
+      stats.accounted > previous.accounted;
+  }
+
+  async function waitForCommentsSyncProgress(context, panel, previous) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < COMMENTS_SYNC_PROGRESS_WAIT_MS) {
+      await delay(COMMENTS_SYNC_PROGRESS_POLL_MS);
+      assertCommentsSyncCanContinue(context);
+
+      const stats = updateAskCommentStats(panel);
+      if (isCommentsSyncComplete(stats) || hasCommentsSyncProgress(stats, previous)) {
+        return { stats, progressed: true };
+      }
+    }
+
+    return { stats: updateAskCommentStats(panel), progressed: false };
+  }
+
+  async function updateAskTranscriptToggleState(panel) {
+    const videoId = getVideoIdFromUrl();
+    const checkbox = panel && panel.querySelector('.ytb-ask-mode-checkbox');
+    if (!videoId || !checkbox) return;
+
+    try {
+      const status = await withWatchTimeout(window.api.getTranscriptStatus(videoId, { force: true }), 8000, 'getTranscriptStatus');
+      const unavailable = status.transcriptUnavailable && !status.hasTranscript;
+      if (unavailable) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+        setAskStatus(panel, 'Transcript unavailable. Ask will use only loaded comments.', 'error');
+      } else {
+        checkbox.disabled = false;
+      }
+      updateAskModeLabel(panel);
+    } catch (error) {
+      logContentError('Ask panel: failed to load transcript state', error);
+    }
+  }
+
+  function setCommentsSyncButtonState(panel, running) {
+    const button = panel && panel.querySelector('.ytb-ask-sync-btn');
+    if (!button) return;
+    button.textContent = running ? 'Stop sync' : 'Sync comments';
+    button.classList.toggle('ytb-ask-sync-btn--stop', !!running);
+  }
+
+  function showCommentsSyncFloatingStop(panel) {
+    removeCommentsSyncFloatingStop();
+
+    const button = document.createElement('button');
+    button.id = 'ytb-ask-sync-floating-stop';
+    button.type = 'button';
+    button.textContent = 'Stop comments sync';
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      stopActiveCommentsSync('Comment sync stopped by user.');
+      setAskStatus(panel, 'Stopping comment sync...', 'busy');
+      returnToAskPanelTop(panel);
+    });
+    document.body.appendChild(button);
+  }
+
+  function removeCommentsSyncFloatingStop() {
+    document.getElementById('ytb-ask-sync-floating-stop')?.remove();
+  }
+
+  function returnToAskPanelTop(panel) {
+    if (panel && panel.isConnected) {
+      const top = panel.getBoundingClientRect().top + window.scrollY - 80;
+      scrollToPosition(Math.max(0, top));
+      return;
+    }
+
+    scrollToPosition(0);
+  }
+
+  async function performCommentsSync(panel) {
+    const videoId = getVideoIdFromUrl();
+    if (!videoId || activeCommentsSync) return;
+
+    const context = startCommentsSyncContext(videoId);
+    setCommentsSyncButtonState(panel, true);
+    showCommentsSyncFloatingStop(panel);
+    setAskStatus(panel, 'Syncing comments...', 'busy');
+
+    try {
+      let stats = updateAskCommentStats(panel);
+      let previous = {
+        comments: stats.comments.length,
+        hiddenReplies: stats.hiddenReplies,
+        accounted: stats.accounted
+      };
+
+      for (let round = 0; round < 240; round++) {
+        assertCommentsSyncCanContinue(context);
+        stats = updateAskCommentStats(panel);
+
+        if (isCommentsSyncComplete(stats)) {
+          setAskStatus(panel, `Comments sync ready. ${formatCommentsCount(stats.comments.length, stats.expected, stats.hiddenReplies)}.`, 'success');
+          return;
+        }
+
+        setAskStatus(panel, `${formatCommentsCount(stats.comments.length, stats.expected, stats.hiddenReplies)}. Loading more...`, 'busy');
+        scrollTowardComments(context);
+        const waitResult = await waitForCommentsSyncProgress(context, panel, previous);
+        stats = waitResult.stats;
+
+        if (waitResult.progressed) {
+          markCommentsSyncProgress(context);
+          previous = {
+            comments: stats.comments.length,
+            hiddenReplies: stats.hiddenReplies,
+            accounted: stats.accounted
+          };
+          continue;
+        }
+
+        setAskStatus(panel, `Comments sync ready. ${formatCommentsCount(stats.comments.length, stats.expected, stats.hiddenReplies)}.`, 'success');
+        return;
+      }
+
+      const finalStats = updateAskCommentStats(panel);
+      setAskStatus(panel, `Comments sync stopped. ${formatCommentsCount(finalStats.comments.length, finalStats.expected, finalStats.hiddenReplies)}.`, 'success');
+    } catch (error) {
+      if (error.isCommentsSyncStop) {
+        if (!error.silent) setAskStatus(panel, error.message || 'Comment sync stopped.', 'success');
+        return;
+      }
+
+      setAskStatus(panel, error.message || 'Comment sync failed.', 'error');
+      logContentError('Ask panel: comment sync failed', error);
+    } finally {
+      if (activeCommentsSync === context) activeCommentsSync = null;
+      removeCommentsSyncFloatingStop();
+      setCommentsSyncButtonState(panel, false);
+      updateAskCommentStats(panel);
+      returnToAskPanelTop(panel);
+    }
+  }
+
+  function handleSyncCommentsClick(panel) {
+    if (activeCommentsSync) {
+      stopActiveCommentsSync('Comment sync stopped by user.');
+      setAskStatus(panel, 'Stopping comment sync...', 'busy');
+      returnToAskPanelTop(panel);
+      return;
+    }
+
+    performCommentsSync(panel).catch(error => {
+      setAskStatus(panel, error.message || 'Comment sync failed.', 'error');
+    });
+  }
+
+  function getCurrentVideoTitleFromPage() {
+    const selectors = [
+      'ytd-watch-metadata h1 yt-formatted-string',
+      'ytd-watch-metadata #title h1',
+      '#title h1 yt-formatted-string',
+      'h1.ytd-watch-metadata'
+    ];
+
+    for (const selector of selectors) {
+      const text = normalizeDomText(document.querySelector(selector)?.textContent || '');
+      if (text) return text;
+    }
+
+    return document.title.replace(/- YouTube$/, '').trim();
+  }
+
+  function getCurrentVideoAuthorFromPage() {
+    const selectors = [
+      'ytd-watch-metadata ytd-video-owner-renderer ytd-channel-name #text a',
+      'ytd-watch-metadata ytd-video-owner-renderer ytd-channel-name #text',
+      'ytd-watch-metadata #owner ytd-channel-name #text a',
+      'ytd-watch-metadata #owner ytd-channel-name #text'
+    ];
+
+    for (const selector of selectors) {
+      const text = normalizeDomText(document.querySelector(selector)?.textContent || '');
+      if (text) return text;
+    }
+
+    return '';
+  }
+
+  async function getTranscriptForAsk(videoId, panel) {
+    const checkbox = panel && panel.querySelector('.ytb-ask-mode-checkbox');
+    if (!checkbox || !checkbox.checked || checkbox.disabled) return '';
+
+    try {
+      const status = await withWatchTimeout(window.api.getTranscriptStatus(videoId, { force: true }), 8000, 'getTranscriptStatus');
+      if (status.transcriptUnavailable && !status.hasTranscript) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+        updateAskModeLabel(panel);
+        setAskStatus(panel, 'Transcript unavailable. Asking about comments only.', 'error');
+        return '';
+      }
+
+      const transcript = status.hasTranscript
+        ? await withWatchTimeout(window.api.getTranscript(videoId), 20000, 'getTranscript')
+        : await withWatchTimeout(window.api.requestTranscript(videoId), 120000, 'requestTranscript');
+      return transcript.timestampedText || transcript.text || '';
+    } catch (error) {
+      checkbox.checked = false;
+      if (error && error.transcriptUnavailable) checkbox.disabled = true;
+      updateAskModeLabel(panel);
+      setAskStatus(panel, 'Transcript could not be loaded. Asking about comments only.', 'error');
+      return '';
+    }
+  }
+
+  async function handleAskAboutClick(panel) {
+    const videoId = getVideoIdFromUrl();
+    const textarea = panel && panel.querySelector('.ytb-ask-textarea');
+    const askButton = panel && panel.querySelector('.ytb-ask-submit-btn');
+    const checkbox = panel && panel.querySelector('.ytb-ask-mode-checkbox');
+    const question = textarea ? textarea.value.trim() : '';
+
+    if (!videoId || !question || !askButton) {
+      setAskStatus(panel, 'Enter a question before asking.', 'error');
+      return;
+    }
+
+    stopActiveCommentsSync('Comment sync stopped before Ask about.', { silent: true });
+    const historyEntry = createAskHistoryEntry(panel, question);
+    askButton.disabled = true;
+    setAskStatus(panel, 'Preparing context...', 'busy');
+
+    try {
+      await ensureCurrentVideoStored(videoId);
+      const stats = updateAskCommentStats(panel);
+      const transcript = await getTranscriptForAsk(videoId, panel);
+      const includeTranscript = !!(checkbox && checkbox.checked && !checkbox.disabled && transcript);
+
+      setAskStatus(panel, 'Asking AI...', 'busy');
+      updateAskHistoryEntry(historyEntry, 'Asking AI...', 'busy', 'Asking AI...');
+      const result = await withWatchTimeout(window.api.askVideo(videoId, {
+        question,
+        comments: stats.comments,
+        expectedCommentCount: stats.expected,
+        includeTranscript,
+        transcript,
+        title: getCurrentVideoTitleFromPage(),
+        author: getCurrentVideoAuthorFromPage()
+      }), 140000, 'askVideo');
+
+      const doneText = `Done. Used ${result.commentCount ?? stats.comments.length} comments${result.transcriptIncluded ? ' + transcript' : ''}.`;
+      updateAskHistoryEntry(historyEntry, result.answer || '', 'success', doneText);
+      setAskStatus(panel, doneText, 'success');
+    } catch (error) {
+      if (error && error.transcriptUnavailable && checkbox) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+        updateAskModeLabel(panel);
+      }
+      updateAskHistoryEntry(historyEntry, error.message || 'Ask failed.', 'error', 'Ask failed.');
+      setAskStatus(panel, error.message || 'Ask failed.', 'error');
+      logContentError('Ask panel: ask failed', error);
+    } finally {
+      askButton.disabled = false;
+      updateAskCommentStats(panel);
+    }
+  }
+
+  function buildYtbAskPanel() {
+    const panel = document.createElement('div');
+    panel.id = 'ytb-ask-panel';
+    panel.hidden = true;
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'ytb-ask-textarea';
+    textarea.rows = 4;
+    textarea.placeholder = 'Ask about this video and loaded comments';
+
+    const controls = document.createElement('div');
+    controls.className = 'ytb-ask-controls';
+
+    const modeLabel = document.createElement('label');
+    modeLabel.className = 'ytb-ask-mode';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'ytb-ask-mode-checkbox';
+    checkbox.checked = true;
+    checkbox.addEventListener('change', () => updateAskModeLabel(panel));
+
+    const modeText = document.createElement('span');
+    modeText.className = 'ytb-ask-mode-text';
+
+    modeLabel.appendChild(checkbox);
+    modeLabel.appendChild(modeText);
+
+    const counter = document.createElement('span');
+    counter.className = 'ytb-ask-comments-count';
+
+    const syncButton = document.createElement('button');
+    syncButton.type = 'button';
+    syncButton.className = 'ytb-ask-panel-btn ytb-ask-sync-btn';
+    syncButton.textContent = 'Sync comments';
+    syncButton.addEventListener('click', event => {
+      event.stopPropagation();
+      handleSyncCommentsClick(panel);
+    });
+
+    const askButton = document.createElement('button');
+    askButton.type = 'button';
+    askButton.className = 'ytb-ask-panel-btn ytb-ask-submit-btn';
+    askButton.textContent = 'Ask about';
+    askButton.addEventListener('click', event => {
+      event.stopPropagation();
+      handleAskAboutClick(panel);
+    });
+
+    controls.appendChild(modeLabel);
+    controls.appendChild(counter);
+    controls.appendChild(syncButton);
+    controls.appendChild(askButton);
+
+    const status = document.createElement('div');
+    status.className = 'ytb-ask-status';
+
+    const history = document.createElement('div');
+    history.className = 'ytb-ask-history';
+
+    panel.appendChild(textarea);
+    panel.appendChild(controls);
+    panel.appendChild(status);
+    panel.appendChild(history);
+
+    updateAskModeLabel(panel);
+    updateAskCommentStats(panel);
+    return panel;
+  }
+
+  function mountYtbAskPanel(panel) {
+    const target = findWatchActionsContainer();
+    const metadata = target && target.closest('ytd-watch-metadata');
+    const aboveFold = metadata && metadata.querySelector('#above-the-fold');
+    const topRow = target && target.closest('#top-row');
+
+    if (aboveFold && panel.parentElement !== aboveFold) {
+      if (topRow && topRow.parentElement === aboveFold) topRow.after(panel);
+      else aboveFold.appendChild(panel);
+    } else if (!aboveFold && target && panel.parentElement !== target.parentElement) {
+      target.after(panel);
+    }
+  }
+
+  function toggleYtbAskPanel(button) {
+    let panel = getAskPanel();
+    if (!panel) {
+      panel = buildYtbAskPanel();
+    }
+
+    mountYtbAskPanel(panel);
+    const willOpen = panel.hidden;
+    panel.hidden = !willOpen;
+    button.classList.toggle('ytb-ask-toggle-btn--open', willOpen);
+    button.setAttribute('aria-expanded', String(willOpen));
+
+    if (willOpen) {
+      updateAskCommentStats(panel);
+      updateAskTranscriptToggleState(panel);
+      panel.querySelector('.ytb-ask-textarea')?.focus();
+    } else {
+      stopActiveCommentsSync('Comment sync stopped.', { silent: true });
+    }
+  }
+
   async function initQuickSave() {
     const res = await safeStorageGetAsync(['quickSavePlaylistId']);
     if (res.quickSavePlaylistId) quickSavePlaylistId = res.quickSavePlaylistId;
@@ -1227,6 +1903,18 @@
     const wrapper = document.createElement('div');
     wrapper.id = 'ytb-actions-wrapper';
 
+    const askBtn = document.createElement('button');
+    askBtn.type = 'button';
+    askBtn.className = 'ytb-action-btn ytb-ask-toggle-btn';
+    askBtn.dataset.ytbAction = 'ask';
+    askBtn.title = 'Ask about video and comments';
+    askBtn.setAttribute('aria-expanded', 'false');
+    askBtn.innerHTML = '<span>Ask</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>';
+    askBtn.addEventListener('click', event => {
+      event.stopPropagation();
+      toggleYtbAskPanel(askBtn);
+    });
+
     const transcriptBtn = document.createElement('button');
     transcriptBtn.type = 'button';
     transcriptBtn.className = 'ytb-action-btn ytb-action-btn--missing';
@@ -1267,6 +1955,7 @@
     summaryWrap.addEventListener('mouseenter', () => showYtbPreview(summaryWrap, 'summary'));
     summaryWrap.addEventListener('mouseleave', scheduleYtbPreviewHide);
 
+    wrapper.appendChild(askBtn);
     wrapper.appendChild(transcriptBtn);
     wrapper.appendChild(summaryWrap);
     return wrapper;
@@ -1351,6 +2040,7 @@
 
   function hasYtbActionButtons(wrapper) {
     return !!wrapper &&
+      !!wrapper.querySelector('[data-ytb-action="ask"]') &&
       !!wrapper.querySelector('[data-ytb-action="transcript"]') &&
       !!wrapper.querySelector('[data-ytb-action="summary"]');
   }
@@ -1368,7 +2058,7 @@
 
   function isYtbActionsMountedVisible() {
     const wrapper = document.getElementById('ytb-actions-wrapper');
-    return isMountedWatchControlVisible(wrapper, ['[data-ytb-action="transcript"]', '[data-ytb-action="summary"]']);
+    return isMountedWatchControlVisible(wrapper, ['[data-ytb-action="ask"]', '[data-ytb-action="transcript"]', '[data-ytb-action="summary"]']);
   }
 
   async function updateQuickSaveButtonState(btn, labelEl) {
@@ -1713,6 +2403,8 @@
       document.getElementById('yt-qs-dropdown')?.remove();
       const existingActions = document.getElementById('ytb-actions-wrapper');
       if (existingActions) existingActions.remove();
+      document.getElementById('ytb-ask-panel')?.remove();
+      stopActiveCommentsSync('Comment sync stopped because this tab opened a different video.', { silent: true });
       hideYtbPreview();
 
       if (!panelApi) return;

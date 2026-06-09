@@ -24,6 +24,7 @@ server/uploads/
 # Local imports and exports
 imports/
 exports/
+js-reverse/
 
 # Logs
 logs/

@@ -23,6 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const summaryPromptInput = document.getElementById('summary-prompt-input');
   const summaryHtmlModelInput = document.getElementById('summary-html-model-input');
   const summaryHtmlPromptInput = document.getElementById('summary-html-prompt-input');
+  const askModelInput = document.getElementById('ask-model-input');
+  const askPromptInput = document.getElementById('ask-prompt-input');
   const preferredTagsInput = document.getElementById('preferred-tags-input');
   const tagDisplayLimitInput = document.getElementById('tag-display-limit-input');
   const tagPromptInput = document.getElementById('tag-prompt-input');
@@ -92,6 +94,8 @@ document.addEventListener('DOMContentLoaded', () => {
       prompt: summaryPromptInput.value.trim(),
       htmlModel: summaryHtmlModelInput.value.trim(),
       htmlPrompt: summaryHtmlPromptInput.value.trim(),
+      askModel: askModelInput.value.trim(),
+      askPrompt: askPromptInput.value.trim(),
       preferredTags: preferredTagsInput.value.trim(),
       tagDisplayLimit: Number(tagDisplayLimitInput.value) || 5,
       tagPrompt: tagPromptInput.value.trim(),
@@ -264,6 +268,8 @@ document.addEventListener('DOMContentLoaded', () => {
       summaryPromptInput.value = settings.prompt || '';
       summaryHtmlModelInput.value = settings.html_model || settings.htmlModel || '';
       summaryHtmlPromptInput.value = settings.html_prompt || settings.htmlPrompt || '';
+      askModelInput.value = settings.ask_model || settings.askModel || settings.model || '';
+      askPromptInput.value = settings.ask_prompt || settings.askPrompt || '';
       preferredTagsInput.value = settings.preferred_tags || settings.preferredTags || '';
       tagDisplayLimitInput.value = settings.tag_display_limit || settings.tagDisplayLimit || 5;
       tagPromptInput.value = settings.tag_prompt || settings.tagPrompt || '';

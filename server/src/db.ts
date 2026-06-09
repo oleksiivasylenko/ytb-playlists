@@ -45,6 +45,14 @@ Use the language that best matches the transcript and the user's tagging workflo
 Keep each tag short, specific, and useful for search.
 Do not include explanations, markdown, numbering, or unsupported facts.`;
 
+const defaultAskPrompt = `Answer questions about a YouTube video using only the provided transcript and currently loaded comments.
+
+Write in the same language as the user's question unless they ask otherwise.
+Be explicit about whether evidence came from the video transcript, the comments, or both.
+If the provided comments are incomplete or empty, say that clearly.
+Do not invent facts or claim that a topic was mentioned unless it appears in the provided context.
+When useful, quote short comment snippets and mention commenter names.`;
+
 function ensureColumn(table: string, column: string, definition: string) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (columns.some(col => col.name === column)) return;
@@ -187,6 +195,8 @@ export function initDb() {
       summary_mode TEXT DEFAULT 'plain',
       transcript_languages TEXT DEFAULT 'en,uk,ru',
       tag_prompt TEXT,
+      ask_model TEXT,
+      ask_prompt TEXT,
       preferred_tags TEXT,
       tag_display_limit INTEGER DEFAULT 5,
       auto_transcript_enabled INTEGER DEFAULT 0,
@@ -238,6 +248,8 @@ export function initDb() {
   ensureColumn('summary_settings', 'summary_mode', "TEXT DEFAULT 'plain'");
   ensureColumn('summary_settings', 'transcript_languages', "TEXT DEFAULT 'en,uk,ru'");
   ensureColumn('summary_settings', 'tag_prompt', 'TEXT');
+  ensureColumn('summary_settings', 'ask_model', 'TEXT');
+  ensureColumn('summary_settings', 'ask_prompt', 'TEXT');
   ensureColumn('summary_settings', 'preferred_tags', 'TEXT');
   ensureColumn('summary_settings', 'tag_display_limit', 'INTEGER DEFAULT 5');
   ensureColumn('summary_settings', 'auto_transcript_enabled', 'INTEGER DEFAULT 0');
@@ -269,13 +281,15 @@ export function initDb() {
         html_prompt = COALESCE(NULLIF(html_prompt, ''), ?),
         transcript_languages = COALESCE(NULLIF(transcript_languages, ''), 'en,uk,ru'),
         tag_prompt = COALESCE(NULLIF(tag_prompt, ''), ?),
+        ask_model = COALESCE(NULLIF(ask_model, ''), model),
+        ask_prompt = COALESCE(NULLIF(ask_prompt, ''), ?),
         tag_display_limit = CASE
           WHEN tag_display_limit IS NULL OR tag_display_limit < 1 THEN 5
           ELSE tag_display_limit
         END,
         language = CASE WHEN language = 'uk' THEN 'Ukrainian' ELSE language END
     WHERE id = 1
-  `).run(defaultHtmlSummaryPrompt, defaultTagPrompt);
+  `).run(defaultHtmlSummaryPrompt, defaultTagPrompt, defaultAskPrompt);
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_playlist_videos_youtube_cleanup

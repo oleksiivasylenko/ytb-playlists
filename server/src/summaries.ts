@@ -13,6 +13,8 @@ export type SummarySettings = {
   summary_mode: SummaryMode;
   transcript_languages: string;
   tag_prompt: string;
+  ask_model: string;
+  ask_prompt: string;
   preferred_tags: string;
   tag_display_limit: number;
   auto_transcript_enabled: number;
@@ -35,6 +37,14 @@ export type StoredSummary = {
 };
 
 export type SummaryMode = 'plain' | 'html';
+
+export type AskComment = {
+  author?: string;
+  text: string;
+  publishedTime?: string;
+  likes?: string;
+  reply?: boolean;
+};
 
 export type StoredVideoTags = {
   videoId: string;
@@ -142,6 +152,8 @@ export function updateSummarySettings(input: Partial<{
   summaryMode: SummaryMode;
   transcriptLanguages: string;
   tagPrompt: string;
+  askModel: string;
+  askPrompt: string;
   preferredTags: string;
   tagDisplayLimit: number;
   autoTranscriptEnabled: boolean;
@@ -171,6 +183,12 @@ export function updateSummarySettings(input: Partial<{
   const tagPrompt = typeof input.tagPrompt === 'string' && input.tagPrompt.trim()
     ? input.tagPrompt.trim()
     : current.tag_prompt;
+  const askModel = typeof input.askModel === 'string' && input.askModel.trim()
+    ? input.askModel.trim()
+    : current.ask_model || current.model;
+  const askPrompt = typeof input.askPrompt === 'string' && input.askPrompt.trim()
+    ? input.askPrompt.trim()
+    : current.ask_prompt || current.prompt;
   const preferredTags = typeof input.preferredTags === 'string'
     ? input.preferredTags.trim()
     : current.preferred_tags || '';
@@ -191,7 +209,7 @@ export function updateSummarySettings(input: Partial<{
   db.prepare(`
     UPDATE summary_settings
     SET model = ?, language = ?, prompt = ?, html_model = ?, html_prompt = ?, summary_mode = ?,
-        transcript_languages = ?, tag_prompt = ?, preferred_tags = ?, tag_display_limit = ?,
+        transcript_languages = ?, tag_prompt = ?, ask_model = ?, ask_prompt = ?, preferred_tags = ?, tag_display_limit = ?,
         auto_transcript_enabled = ?, auto_summary_enabled = ?, auto_tags_enabled = ?, updated_at = ?
     WHERE id = 1
   `).run(
@@ -203,6 +221,8 @@ export function updateSummarySettings(input: Partial<{
     summaryMode,
     transcriptLanguages,
     tagPrompt,
+    askModel,
+    askPrompt,
     preferredTags,
     tagDisplayLimit,
     autoTranscriptEnabled,
@@ -327,6 +347,66 @@ function buildTagMessages(input: {
         'If a preferred tag is clearly relevant, prefer it over a near-duplicate new tag.',
         'Transcript with timestamps:',
         input.transcript
+      ].join('\n')
+    }
+  ];
+}
+
+function formatAskComments(comments: AskComment[]) {
+  if (comments.length === 0) {
+    return 'No comments were available in the current YouTube page snapshot.';
+  }
+
+  return comments.map((comment, index) => {
+    const meta = [
+      `#${index + 1}`,
+      comment.reply ? 'reply' : 'comment',
+      comment.author ? `author: ${comment.author}` : '',
+      comment.publishedTime ? `time: ${comment.publishedTime}` : '',
+      comment.likes ? `likes: ${comment.likes}` : ''
+    ].filter(Boolean).join(' | ');
+
+    return `${meta}\n${comment.text}`;
+  }).join('\n\n');
+}
+
+function buildAskMessages(input: {
+  prompt: string;
+  question: string;
+  title: string;
+  author: string;
+  includeTranscript: boolean;
+  transcript: string;
+  comments: AskComment[];
+  expectedCommentCount: number | null;
+}) {
+  const expectedText = Number.isInteger(input.expectedCommentCount)
+    ? String(input.expectedCommentCount)
+    : 'unknown';
+  const hasTranscript = input.includeTranscript && !!input.transcript.trim();
+
+  return [
+    {
+      role: 'system',
+      content: input.prompt
+    },
+    {
+      role: 'user',
+      content: [
+        `Video title: ${input.title}`,
+        `Channel/author: ${input.author}`,
+        `Loaded comments: ${input.comments.length}`,
+        `Expected YouTube comment count: ${expectedText}`,
+        `Transcript included: ${hasTranscript ? 'yes' : 'no'}`,
+        '',
+        'User question:',
+        input.question,
+        '',
+        'Video transcript:',
+        hasTranscript ? input.transcript.trim() : 'Transcript was not included for this request.',
+        '',
+        'Currently loaded comments:',
+        formatAskComments(input.comments)
       ].join('\n')
     }
   ];
@@ -542,6 +622,78 @@ async function requestOpenRouterTags(videoId: string) {
 
   if (tags.length === 0) throw new Error('OpenRouter returned no usable tags.');
   return saveTags(videoId, tags);
+}
+
+export async function askVideoQuestion(input: {
+  videoId: string;
+  question: string;
+  comments: AskComment[];
+  includeTranscript: boolean;
+  transcript?: string;
+  title?: string;
+  author?: string;
+  expectedCommentCount?: number | null;
+}) {
+  const settings = getSummarySettings();
+  const video = db.prepare('SELECT title, author FROM videos WHERE id = ?').get(input.videoId) as {
+    title?: string;
+    author?: string;
+  } | undefined;
+  const model = settings.ask_model || settings.model;
+  const prompt = settings.ask_prompt || settings.prompt;
+
+  const messages = buildAskMessages({
+    prompt,
+    question: input.question,
+    title: input.title || video?.title || 'Unknown Title',
+    author: input.author || video?.author || 'Unknown Author',
+    includeTranscript: input.includeTranscript,
+    transcript: input.transcript || '',
+    comments: input.comments,
+    expectedCommentCount: input.expectedCommentCount ?? null
+  });
+
+  let response;
+  try {
+    response = await axios.post<OpenRouterResponse>(
+      `${getOpenRouterBaseUrl()}/chat/completions`,
+      {
+        model,
+        messages,
+        temperature: 0.2,
+        max_tokens: 3000
+      },
+      {
+        timeout: 120000,
+        headers: {
+          Authorization: `Bearer ${getOpenRouterApiKey()}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'http://localhost:3001',
+          'X-Title': 'ytb-playlists'
+        }
+      }
+    );
+  } catch (error) {
+    if (axios.isAxiosError<OpenRouterErrorResponse>(error)) {
+      logOpenRouterError({ action: 'ask', videoId: input.videoId, model }, error);
+      throw new Error(`OpenRouter request failed: ${openRouterErrorMessage(error)}`);
+    }
+    throw error;
+  }
+
+  const answer = String(response.data.choices?.[0]?.message?.content || '').trim();
+  if (!answer) {
+    throw new Error(response.data.error?.message || 'OpenRouter returned an empty answer.');
+  }
+
+  return {
+    videoId: input.videoId,
+    model,
+    answer,
+    providerResponseId: response.data.id || null,
+    commentCount: input.comments.length,
+    transcriptIncluded: input.includeTranscript && !!(input.transcript || '').trim()
+  };
 }
 
 export async function ensureSummary(videoId: string, mode: SummaryMode = 'plain', force = false) {

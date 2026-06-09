@@ -612,6 +612,13 @@
               </label>
               <input type="text" id="transcript-languages-input" placeholder="en,uk,ru">
             </div>
+            <div class="field">
+              <label for="ask-model-input">
+                Ask model
+                <span class="info-tip" tabindex="0" data-tip="Model used by the Ask panel on YouTube video pages. Enter the provider/model id, for example google/gemini-2.5-flash.">i</span>
+              </label>
+              <input type="text" id="ask-model-input" placeholder="google/gemini-2.5-flash">
+            </div>
             <div class="summary-settings-row">
               <div class="field">
                 <label for="preferred-tags-input">
@@ -648,6 +655,13 @@
                 <span class="info-tip" tabindex="0" data-tip="Prompt sent to the tag model. It should instruct the model to return JSON with a tags array, for example { &quot;tags&quot;: [&quot;tag one&quot;, &quot;tag two&quot;] }.">i</span>
               </label>
               <textarea id="tag-prompt-input"></textarea>
+            </div>
+            <div class="field">
+              <label for="ask-prompt-input">
+                Ask predefined prompt
+                <span class="info-tip" tabindex="0" data-tip="System prompt used when answering ad hoc questions about currently loaded comments and optionally the video transcript.">i</span>
+              </label>
+              <textarea id="ask-prompt-input"></textarea>
             </div>
             <div class="summary-settings-actions">
               <button id="summary-settings-save" type="button">Save Summary Settings</button>

@@ -407,6 +407,20 @@ const api = {
     cacheInvalidate('playlist_videos_', 'generated_summaries');
     return data;
   },
+  async askVideo(videoId, payload) {
+    const res = await apiFetch(`${API_BASE}/videos/${videoId}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {})
+    });
+    const data = await readJsonResponse(res, 'Failed to ask about video');
+    if (!res.ok) {
+      const error = new Error(data.error || 'Failed to ask about video');
+      Object.assign(error, data);
+      throw error;
+    }
+    return data;
+  },
   async startSync(payload) {
     const res = await apiFetch(`${API_BASE}/sync/start`, {
       method: 'POST',
