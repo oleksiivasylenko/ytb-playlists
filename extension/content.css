@@ -1751,6 +1751,8 @@ ytd-app[dark] .yt-qs-dropdown-item--active {
   padding: 0 12px;
   font-size: 14px;
   font-weight: 700;
+  outline: 2px solid #35c85a;
+  outline-offset: -2px;
 }
 
 .ytb-ask-toggle-btn svg {
