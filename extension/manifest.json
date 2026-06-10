@@ -27,7 +27,16 @@
     {
       "matches": ["https://www.youtube.com/*"],
       "css": ["content.css"],
-      "js": ["api.js", "asset-utils.js", "preview.js", "panel-ui.js", "content.js"]
+      "js": [
+        "api.js",
+        "asset-utils.js",
+        "preview.js",
+        "panel-template.js",
+        "panel-utils.js",
+        "panel-ui.js",
+        "content-dom.js",
+        "content.js"
+      ]
     }
   ],
   "action": {
@@ -43,7 +52,7 @@
   "web_accessible_resources": [
     {
       "resources": ["management.html", "asset.html"],
-      "matches": ["<all_urls>"]
+      "matches": ["https://www.youtube.com/*"]
     }
   ]
 }

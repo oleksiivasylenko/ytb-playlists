@@ -50,9 +50,24 @@ The intended workflow is to process videos locally first, then sync the result b
 
 ```text
 ytb-playlists/
-  extension/        Chrome/Chromium extension UI and YouTube integration
-  server/           Express API, SQLite schema, transcript and summary services
-  database.sqlite   Local runtime database, ignored by git
+  extension/                  Chrome/Chromium extension UI and YouTube integration
+    api.js                    HTTP client for the local API with caching and background proxy
+    content-dom.js            Read-only DOM adapters for YouTube pages (playlist, watch, comments)
+    content.js                Content-script behaviour: sync, quick save, watch controls, ask panel
+    panel-template.js         HTML template of the docked/floating panel
+    panel-utils.js            Pure helpers: formatting, video status, tags
+    panel-ui.js               Panel state, rendering, and interactions
+    background.js             Service worker: messaging, tabs, sync orchestration
+  server/                     Express API, SQLite schema, transcript and summary services
+    src/
+      index.ts                App entry point
+      db.ts                   SQLite connection, schema, migrations
+      prompts.ts              Default LLM prompts
+      validation.ts           Zod schemas and request normalization
+      routes/                 Domain routers: playlists, videos, sync, summaries, transcripts
+      services/               Background queues: metadata refresh, availability, auto assets
+      lib/                    Shared query and metadata helpers
+  database.sqlite             Local runtime database, ignored by git
 ```
 
 The server runs at `http://localhost:3001`, and the extension talks to it through `http://localhost:3001/api`.

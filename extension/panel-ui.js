@@ -1,8 +1,28 @@
 (function() {
-  function getPanelHtml(options = {}) {
-    const closeButton = options.closeButton ? '<button id="yt-playlist-alt-close" class="yt-panel-header-button" title="Close" aria-label="Close"><span>&times;</span></button>' : '';
-    return "<div id=\"yt-playlist-alt-panel\">\n    <div id=\"yt-playlist-alt-header\">\n      <div class=\"yt-playlist-alt-header-main\">\n        <h3>My Playlists</h3>\n        <div id=\"yt-playlist-alt-sync-status\" class=\"yt-sync-status\"></div>\n      </div>\n      <div class=\"yt-playlist-alt-header-actions\">\n      <button id=\"yt-playlist-alt-refresh\" class=\"yt-panel-header-button\" title=\"Refresh from server\" aria-label=\"Refresh from server\">\n        <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">\n          <path d=\"M21 12a9 9 0 0 1-15.2 6.5\"></path>\n          <path d=\"M3 12A9 9 0 0 1 18.2 5.5\"></path>\n          <path d=\"M18 2v4h-4\"></path>\n          <path d=\"M6 22v-4h4\"></path>\n        </svg>\n        <span>Refresh</span>\n      </button>\n      __CLOSE_BUTTON__\n    </div>\n    </div>\n\n    <div id=\"yt-playlist-alt-controls\">\n      <div class=\"yt-playlist-alt-row\">\n        <select id=\"yt-playlist-alt-select\"></select>\n        <button id=\"yt-playlist-alt-sync\">Sync Page</button>\n        <button id=\"yt-playlist-alt-scroll-current\" class=\"yt-playlist-alt-icon-button\" type=\"button\" title=\"Scroll to current video\" aria-label=\"Scroll to current video\">\n          <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">\n            <circle cx=\"12\" cy=\"12\" r=\"7\"></circle>\n            <circle cx=\"12\" cy=\"12\" r=\"2\"></circle>\n            <path d=\"M12 2v3\"></path>\n            <path d=\"M12 19v3\"></path>\n            <path d=\"M2 12h3\"></path>\n            <path d=\"M19 12h3\"></path>\n          </svg>\n        </button>\n      </div>\n      <div class=\"yt-playlist-alt-row\">\n        <input type=\"text\" id=\"yt-playlist-alt-search\" placeholder=\"Search...\">\n        <button id=\"yt-playlist-alt-filter-toggle\" class=\"yt-playlist-alt-icon-button yt-playlist-alt-filter-button\" title=\"Filters\" aria-label=\"Filters\">\n          <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">\n            <path d=\"M4 5h16l-6 7v5l-4 2v-7L4 5z\"></path>\n          </svg>\n        </button>\n      </div>\n      <div id=\"yt-playlist-alt-settings\">\n        <div class=\"yt-settings-section\">\n          <div class=\"yt-settings-label\">Date filter</div>\n          <div class=\"yt-playlist-alt-row yt-date-filter-row\">\n            <select id=\"yt-playlist-alt-date-field\" title=\"Date field\">\n              <option value=\"published_at\">Published</option>\n              <option value=\"added_at\">Added</option>\n            </select>\n            <select id=\"yt-playlist-alt-date-direction\" title=\"Date direction\">\n              <option value=\"newer\">Newer than</option>\n              <option value=\"older\">Older than</option>\n            </select>\n            <input type=\"number\" id=\"yt-playlist-alt-date-amount\" min=\"1\" step=\"1\" placeholder=\"N\">\n            <select id=\"yt-playlist-alt-date-unit\" title=\"Date unit\">\n              <option value=\"days\">days</option>\n              <option value=\"months\">months</option>\n              <option value=\"years\">years</option>\n            </select>\n          </div>\n        </div>\n        <div class=\"yt-settings-section\">\n          <div class=\"yt-settings-label\">Sort videos by</div>\n          <select id=\"yt-playlist-alt-sort\">\n            <option value=\"added-newest\">Date Added (Newest)</option>\n            <option value=\"added-oldest\">Date Added (Oldest)</option>\n            <option value=\"popular\">Most Popular</option>\n            <option value=\"published-newest\">Date Published (Newest)</option>\n            <option value=\"published-oldest\">Date Published (Oldest)</option>\n            <option value=\"duration-short\">Short to Long</option>\n            <option value=\"duration-long\">Long to Short</option>\n            <option value=\"title-asc\">Title (A to Z)</option>\n            <option value=\"title-desc\">Title (Z to A)</option>\n          </select>\n        </div>\n        <div class=\"yt-settings-section\" id=\"yt-group-sort-section\" style=\"display:none;\">\n          <div class=\"yt-settings-label\">Sort groups by</div>\n          <select id=\"yt-playlist-alt-group-sort\">\n            <option value=\"name-asc\">Name (A to Z)</option>\n            <option value=\"name-desc\">Name (Z to A)</option>\n            <option value=\"count-high\">Group Size (High to Low)</option>\n            <option value=\"count-low\">Group Size (Low to High)</option>\n            <option value=\"duration-high\">Total Duration (Long first)</option>\n            <option value=\"duration-low\">Total Duration (Short first)</option>\n          </select>\n        </div>\n        <div class=\"yt-settings-section\">\n          <div class=\"yt-settings-label\">View</div>\n          <select id=\"yt-playlist-alt-status-filter\">\n            <option value=\"active\">Active</option>\n            <option value=\"all\">All statuses</option>\n            <option value=\"removed_by_user\">Removed by you</option>\n            <option value=\"removed_from_source\">Removed from YouTube playlist</option>\n            <option value=\"unavailable_on_youtube\">Unavailable on YouTube</option>\n            <option value=\"missing\">Missing / unavailable</option>\n          </select>\n          <label class=\"yt-settings-toggle\">\n            <input type=\"checkbox\" id=\"yt-playlist-alt-group\">\n            <span class=\"yt-settings-toggle-track\"></span>\n            <span class=\"yt-settings-toggle-text\">Group by Author</span>\n          </label>\n        </div>\n        <div class=\"yt-settings-section\">\n          <div class=\"yt-settings-label\">Behaviour</div>\n          <label class=\"yt-settings-toggle\">\n            <input type=\"checkbox\" id=\"yt-playlist-alt-remove-fully-watched\">\n            <span class=\"yt-settings-toggle-track\"></span>\n            <span class=\"yt-settings-toggle-text\">Remove after fully watched</span>\n          </label>\n          <label class=\"yt-settings-toggle\">\n            <input type=\"checkbox\" id=\"yt-playlist-alt-remove-on-skip\">\n            <span class=\"yt-settings-toggle-track\"></span>\n            <span class=\"yt-settings-toggle-text\">Remove on skip / switch</span>\n          </label>\n        </div>\n      </div>\n    </div>\n\n    <div id=\"yt-playlist-alt-videos\"></div>\n  </div>".replace('__CLOSE_BUTTON__', closeButton);
-  }
+  const { getPanelHtml } = window.ytbPanelTemplate;
+  const {
+    delay,
+    waitForTransition,
+    formatDuration,
+    formatWatchHours,
+    toTimestamp,
+    formatRelativeDate,
+    getSortOrder,
+    compareSortOrder,
+    formatCompactViews,
+    isUnavailable,
+    normalizeVideoStatus,
+    isYoutubeCleanupPending,
+    isMissingVideo,
+    getVideoStatusLabel,
+    hasTranscript,
+    isTranscriptUnavailable,
+    hasHtmlSummary,
+    getVideoTags,
+    hasTags,
+    normalizeTagFilterValue,
+    getTagFilterKey
+  } = window.ytbPanelUtils;
 
   function create(options = {}) {
     const mount = options.mount || document.body;
@@ -637,10 +657,6 @@
     return true;
   }
 
-  function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
   function bindDelayedHoverState(element, classTarget = element) {
     let hoverTimer = null;
 
@@ -677,24 +693,6 @@
     });
   }
 
-  function waitForTransition(element, fallbackMs) {
-    return new Promise(resolve => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        element.removeEventListener('transitionend', onTransitionEnd);
-        resolve();
-      };
-      const onTransitionEnd = event => {
-        if (event.target === element && event.propertyName === 'height') finish();
-      };
-
-      element.addEventListener('transitionend', onTransitionEnd);
-      setTimeout(finish, fallbackMs);
-    });
-  }
-
   async function collapseVideoElement(videoId) {
     const item = videoList.querySelector(`.yt-playlist-alt-video[data-video-id="${videoId}"]`);
     if (!item || item.classList.contains('yt-playlist-alt-video--collapsing')) return;
@@ -714,165 +712,9 @@
     await waitForTransition(item, 560);
   }
 
-  function formatDuration(seconds) {
-    if (!seconds || seconds === 0) return '';
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    return `${m}:${String(s).padStart(2, '0')}`;
-  }
-
-  function formatWatchHours(seconds) {
-    const totalSeconds = Number(seconds);
-    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return '0 hours';
-
-    const hours = totalSeconds / 3600;
-    if (hours < 1) return `${Math.ceil(totalSeconds / 60)} min`;
-    if (hours < 10) return `${hours.toFixed(1).replace(/\.0$/, '')} hours`;
-    return `${Math.round(hours)} hours`;
-  }
-
-  function formatRelativeDate(dateValue) {
-    if (!dateValue) return '';
-    const timestamp = toTimestamp(dateValue);
-    if (!timestamp) return '';
-    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-    const units = [
-      ['year', 365 * 24 * 60 * 60],
-      ['month', 30 * 24 * 60 * 60],
-      ['week', 7 * 24 * 60 * 60],
-      ['day', 24 * 60 * 60],
-      ['hour', 60 * 60],
-      ['minute', 60]
-    ];
-
-    for (const [name, seconds] of units) {
-      const value = Math.floor(elapsedSeconds / seconds);
-      if (value >= 1) return `${value} ${name}${value === 1 ? '' : 's'} ago`;
-    }
-
-    return 'just now';
-  }
-
-  function toTimestamp(value) {
-    if (!value) return 0;
-    const timestamp = new Date(value).getTime();
-    return Number.isNaN(timestamp) ? 0 : timestamp;
-  }
-
-  function getSortOrder(video) {
-    const order = Number(video.sort_order);
-    return Number.isFinite(order) ? order : 0;
-  }
-
-  function compareSortOrder(a, b) {
-    return getSortOrder(a) - getSortOrder(b);
-  }
-
-  function formatCompactViews(viewCount) {
-    const count = Number(viewCount);
-    if (!Number.isFinite(count) || count <= 0) return '';
-
-    const units = [
-      [1000000000, 'bln'],
-      [1000000, 'mln'],
-      [1000, 'k']
-    ];
-
-    for (const [size, suffix] of units) {
-      if (count >= size) {
-        const value = count / size;
-        const formatted = value >= 10
-          ? Math.round(value).toString()
-          : value.toFixed(1).replace(/\.0$/, '');
-        return `${formatted}${suffix}`;
-      }
-    }
-
-    return Math.round(count).toString();
-  }
-
-  function isUnavailable(video) {
-    return video.status === 'unavailable_on_youtube' ||
-      video.status === 'unavailable' ||
-      video.title === 'Unknown Title' ||
-      !video.title;
-  }
-
-  function normalizeVideoStatus(video) {
-    return video.status || 'active';
-  }
-
-  function isYoutubeCleanupPending(video) {
-    const status = normalizeVideoStatus(video);
-    return (status === 'removed_by_user' || status === 'moved_to_playlist') && !video.youtube_removed_at;
-  }
-
-  function isMissingVideo(video) {
-    const status = normalizeVideoStatus(video);
-    return status === 'removed_from_source' ||
-      status === 'removed' ||
-      status === 'unavailable_on_youtube' ||
-      status === 'unavailable' ||
-      isUnavailable(video);
-  }
-
-  function getVideoStatusLabel(video) {
-    const status = normalizeVideoStatus(video);
-    if (status === 'moved_to_playlist') {
-      const target = video.moved_to_playlist_name ? `: ${video.moved_to_playlist_name}` : '';
-      return `Moved to another list${target}`;
-    }
-    if (isYoutubeCleanupPending(video)) return 'Pending YouTube cleanup';
-    if (status === 'removed_by_user') return 'Removed by you';
-    if (status === 'removed_from_source' || status === 'removed') return 'Removed from YouTube playlist';
-    if (status === 'unavailable_on_youtube' || status === 'unavailable') return 'Unavailable on YouTube';
-    return '';
-  }
-
-  function hasTranscript(video) {
-    return video.has_transcript === 1 || video.has_transcript === true;
-  }
-
-  function isTranscriptUnavailable(video) {
-    return video.transcript_unavailable === 1 ||
-      video.transcript_unavailable === true ||
-      video.transcriptUnavailable === true;
-  }
-
   function hasSummary(video) {
     if (summaryMode === 'html') return video.has_html_summary === 1 || video.has_html_summary === true;
     return video.has_summary === 1 || video.has_summary === true;
-  }
-
-  function hasHtmlSummary(video) {
-    return video.has_html_summary === 1 || video.has_html_summary === true;
-  }
-
-  function getVideoTags(video) {
-    if (!video) return [];
-    if (Array.isArray(video.tags)) return video.tags.filter(tag => typeof tag === 'string' && tag.trim());
-    if (!video.tags_json) return [];
-
-    try {
-      const parsed = JSON.parse(video.tags_json);
-      return Array.isArray(parsed) ? parsed.filter(tag => typeof tag === 'string' && tag.trim()) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  function hasTags(video) {
-    return getVideoTags(video).length > 0;
-  }
-
-  function normalizeTagFilterValue(tag) {
-    return typeof tag === 'string' ? tag.replace(/\s+/g, ' ').trim() : '';
-  }
-
-  function getTagFilterKey(tag) {
-    return normalizeTagFilterValue(tag).toLowerCase();
   }
 
   function getUniqueVideoTags(videos = allVideos) {
