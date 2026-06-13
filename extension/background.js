@@ -16,11 +16,112 @@ async function setYoutubeSidePanel(tabId, url) {
     : { tabId, enabled: false };
 
   await chrome.sidePanel.setOptions(options);
+  if (!enabled) {
+    rememberDockedPanelClosed(tabId);
+    forgetDockedPanelHiddenForFullscreen(tabId);
+  }
 }
 
 async function configureOpenTabsSidePanels() {
   const tabs = await chrome.tabs.query({});
   await Promise.all(tabs.map(tab => setYoutubeSidePanel(tab.id, tab.url).catch(() => {})));
+}
+
+const dockedSidePanelOpenTabs = new Set();
+const fullscreenHiddenDockedPanelTabs = new Set();
+const fallbackDisabledDockedPanelTabs = new Set();
+const DOCKED_SIDE_PANEL_OPEN_TAB_KEY = 'dockedSidePanelOpenTabId';
+const DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY = 'dockedSidePanelFullscreenHiddenTabId';
+const DOCKED_SIDE_PANEL_FALLBACK_DISABLED_TAB_KEY = 'dockedSidePanelFallbackDisabledTabId';
+const HIDE_SIDE_PANEL_ON_FULLSCREEN_KEY = 'hideSidePanelOnFullscreen';
+
+function isPanelPath(path) {
+  return !path || String(path).endsWith('panel.html');
+}
+
+function rememberDockedPanelOpen(tabId) {
+  if (!tabId) return;
+  dockedSidePanelOpenTabs.add(tabId);
+  chrome.storage.local.set({ [DOCKED_SIDE_PANEL_OPEN_TAB_KEY]: tabId }).catch(() => {});
+}
+
+function rememberDockedPanelClosed(tabId, options = {}) {
+  if (!tabId) return;
+  dockedSidePanelOpenTabs.delete(tabId);
+  if (!options.keepFallbackDisabled) fallbackDisabledDockedPanelTabs.delete(tabId);
+  chrome.storage.local.get([DOCKED_SIDE_PANEL_OPEN_TAB_KEY])
+    .then(stored => {
+      if (Number(stored[DOCKED_SIDE_PANEL_OPEN_TAB_KEY]) === Number(tabId)) {
+        return chrome.storage.local.set({ [DOCKED_SIDE_PANEL_OPEN_TAB_KEY]: null });
+      }
+      return null;
+    })
+    .catch(() => {});
+}
+
+async function isDockedPanelOpen(tabId) {
+  if (dockedSidePanelOpenTabs.has(tabId)) return true;
+  const stored = await chrome.storage.local.get([DOCKED_SIDE_PANEL_OPEN_TAB_KEY]);
+  return Number(stored[DOCKED_SIDE_PANEL_OPEN_TAB_KEY]) === Number(tabId);
+}
+
+async function shouldHideSidePanelOnFullscreen() {
+  const stored = await chrome.storage.local.get([HIDE_SIDE_PANEL_ON_FULLSCREEN_KEY]);
+  return stored[HIDE_SIDE_PANEL_ON_FULLSCREEN_KEY] !== false;
+}
+
+async function clearDockedPanelRuntimeState() {
+  dockedSidePanelOpenTabs.clear();
+  fullscreenHiddenDockedPanelTabs.clear();
+  fallbackDisabledDockedPanelTabs.clear();
+  await chrome.storage.local.set({
+    [DOCKED_SIDE_PANEL_OPEN_TAB_KEY]: null,
+    [DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY]: null,
+    [DOCKED_SIDE_PANEL_FALLBACK_DISABLED_TAB_KEY]: null
+  });
+}
+
+function rememberDockedPanelHiddenForFullscreen(tabId, fallbackDisabled = false) {
+  if (!tabId) return;
+  fullscreenHiddenDockedPanelTabs.add(tabId);
+  if (fallbackDisabled) fallbackDisabledDockedPanelTabs.add(tabId);
+  chrome.storage.local.set({
+    [DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY]: tabId,
+    [DOCKED_SIDE_PANEL_FALLBACK_DISABLED_TAB_KEY]: fallbackDisabled ? tabId : null
+  }).catch(() => {});
+}
+
+async function isDockedPanelHiddenForFullscreen(tabId) {
+  if (fullscreenHiddenDockedPanelTabs.has(tabId)) return true;
+  const stored = await chrome.storage.local.get([DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY]);
+  return Number(stored[DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY]) === Number(tabId);
+}
+
+async function wasDockedPanelFallbackDisabled(tabId) {
+  if (fallbackDisabledDockedPanelTabs.has(tabId)) return true;
+  const stored = await chrome.storage.local.get([DOCKED_SIDE_PANEL_FALLBACK_DISABLED_TAB_KEY]);
+  return Number(stored[DOCKED_SIDE_PANEL_FALLBACK_DISABLED_TAB_KEY]) === Number(tabId);
+}
+
+function forgetDockedPanelHiddenForFullscreen(tabId) {
+  if (!tabId) return;
+  fullscreenHiddenDockedPanelTabs.delete(tabId);
+  fallbackDisabledDockedPanelTabs.delete(tabId);
+  chrome.storage.local.get([
+    DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY,
+    DOCKED_SIDE_PANEL_FALLBACK_DISABLED_TAB_KEY
+  ])
+    .then(stored => {
+      const payload = {};
+      if (Number(stored[DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY]) === Number(tabId)) {
+        payload[DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY] = null;
+      }
+      if (Number(stored[DOCKED_SIDE_PANEL_FALLBACK_DISABLED_TAB_KEY]) === Number(tabId)) {
+        payload[DOCKED_SIDE_PANEL_FALLBACK_DISABLED_TAB_KEY] = null;
+      }
+      return Object.keys(payload).length ? chrome.storage.local.set(payload) : null;
+    })
+    .catch(() => {});
 }
 
 async function getActiveYoutubeTab() {
@@ -125,6 +226,28 @@ async function activateFloatingPanel() {
   return { success: true };
 }
 
+async function markDockedSidePanelOpenForTab(request = {}) {
+  if (request.tabId) {
+    rememberDockedPanelOpen(request.tabId);
+    return { success: true };
+  }
+
+  const tab = await getActiveYoutubeTab();
+  if (tab && tab.id) rememberDockedPanelOpen(tab.id);
+  return { success: true };
+}
+
+async function markDockedSidePanelClosedForTab(request = {}) {
+  if (request.tabId) {
+    rememberDockedPanelClosed(request.tabId);
+    return { success: true };
+  }
+
+  const tab = await getActiveYoutubeTab();
+  if (tab && tab.id) rememberDockedPanelClosed(tab.id);
+  return { success: true };
+}
+
 async function getActiveYoutubeVideo() {
   const tab = await getActiveYoutubeTab();
   const videoId = tab ? getVideoIdFromUrl(tab.url) : null;
@@ -144,6 +267,66 @@ async function getActiveYoutubePlaylistSource() {
     tabId: tab && tab.id,
     error
   };
+}
+
+async function closeDockedSidePanelForFullscreen(tabId) {
+  if (!tabId || !chrome.sidePanel) return { success: false, error: 'Side Panel API is not available.' };
+  if (!await shouldHideSidePanelOnFullscreen()) return { success: true, hidden: false };
+  if (!await isDockedPanelOpen(tabId)) return { success: true, hidden: false };
+
+  let fallbackDisabled = false;
+
+  if (typeof chrome.sidePanel.close === 'function') {
+    await chrome.sidePanel.close({ tabId });
+  } else {
+    fallbackDisabled = true;
+    await chrome.sidePanel.setOptions({ tabId, enabled: false });
+  }
+
+  rememberDockedPanelHiddenForFullscreen(tabId, fallbackDisabled);
+  rememberDockedPanelClosed(tabId, { keepFallbackDisabled: fallbackDisabled });
+  return { success: true, hidden: true };
+}
+
+async function handleDockedSidePanelFullscreenExit(tab) {
+  const tabId = tab && tab.id;
+  if (!tabId || !chrome.sidePanel) return { success: false, error: 'Side Panel API is not available.' };
+  if (!await isDockedPanelHiddenForFullscreen(tabId)) return { success: true };
+
+  const fallbackDisabled = await wasDockedPanelFallbackDisabled(tabId);
+  forgetDockedPanelHiddenForFullscreen(tabId);
+  if (fallbackDisabled) {
+    await setYoutubeSidePanel(tabId, tab.url);
+  }
+
+  return { success: true };
+}
+
+async function handleYoutubeFullscreenState(request, sender) {
+  const tab = sender && sender.tab;
+  if (!tab || !tab.id || !isYoutubeTab(tab)) return { success: false, error: 'Missing YouTube tab.' };
+  return request.fullscreen
+    ? closeDockedSidePanelForFullscreen(tab.id)
+    : handleDockedSidePanelFullscreenExit(tab);
+}
+
+async function handleHideSidePanelSettingChange(enabled) {
+  if (enabled !== false) return;
+
+  const tabIds = new Set(fullscreenHiddenDockedPanelTabs);
+  const stored = await chrome.storage.local.get([DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY]);
+  if (stored[DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY]) {
+    tabIds.add(Number(stored[DOCKED_SIDE_PANEL_FULLSCREEN_HIDDEN_TAB_KEY]));
+  }
+
+  await Promise.all(Array.from(tabIds).map(async tabId => {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      await handleDockedSidePanelFullscreenExit(tab);
+    } catch (err) {
+      forgetDockedPanelHiddenForFullscreen(tabId);
+    }
+  }));
 }
 
 async function startPlaylistSync(request) {
@@ -307,15 +490,41 @@ async function openSummaryPage(videoId, options = {}) {
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
+  await clearDockedPanelRuntimeState();
   await configureOpenTabsSidePanels();
 });
 
-chrome.runtime.onStartup.addListener(configureOpenTabsSidePanels);
+chrome.runtime.onStartup.addListener(async () => {
+  await clearDockedPanelRuntimeState();
+  await configureOpenTabsSidePanels();
+});
+
+if (chrome.sidePanel && chrome.sidePanel.onOpened) {
+  chrome.sidePanel.onOpened.addListener(info => {
+    if (isPanelPath(info && info.path) && info.tabId) rememberDockedPanelOpen(info.tabId);
+  });
+}
+
+if (chrome.sidePanel && chrome.sidePanel.onClosed) {
+  chrome.sidePanel.onClosed.addListener(info => {
+    if (isPanelPath(info && info.path) && info.tabId) rememberDockedPanelClosed(info.tabId);
+  });
+}
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url || tab.url) {
     setYoutubeSidePanel(tabId, tab.url).catch(() => {});
   }
+});
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  rememberDockedPanelClosed(tabId);
+  forgetDockedPanelHiddenForFullscreen(tabId);
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes[HIDE_SIDE_PANEL_ON_FULLSCREEN_KEY]) return;
+  handleHideSidePanelSettingChange(changes[HIDE_SIDE_PANEL_ON_FULLSCREEN_KEY].newValue).catch(() => {});
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
@@ -331,6 +540,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     task = openManagementPage();
   } else if (request.action === 'activateFloatingPanel') {
     task = activateFloatingPanel();
+  } else if (request.action === 'markDockedSidePanelOpen') {
+    task = markDockedSidePanelOpenForTab(request);
+  } else if (request.action === 'markDockedSidePanelClosed') {
+    task = markDockedSidePanelClosedForTab(request);
+  } else if (request.action === 'setYoutubeFullscreenState') {
+    task = handleYoutubeFullscreenState(request, sender);
   } else if (request.action === 'getActiveYoutubeVideo') {
     task = getActiveYoutubeVideo();
   } else if (request.action === 'getActiveYoutubePlaylistSource') {

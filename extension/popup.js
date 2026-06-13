@@ -47,6 +47,7 @@ document.getElementById('open-dock-panel').addEventListener('click', async () =>
       }
     });
     await chrome.sidePanel.open({ tabId: tab.id });
+    chrome.runtime.sendMessage({ action: 'markDockedSidePanelOpen', tabId: tab.id }, () => {});
     window.close();
   } catch (err) {
     setStatus(err.message || 'Failed to open dock panel.');

@@ -15,11 +15,14 @@
   let videoWatchTimerId = null;
   let runtimeWatchdogId = null;
   let watchControlsWatchdogId = null;
+  let fullscreenWatchdogId = null;
   let watchControlsEventsController = null;
+  let fullscreenEventsController = null;
   const watchControlsRetryIds = new Set();
   let panelApi = null;
   let activePlaylistSync = null;
   let activeCommentsSync = null;
+  let lastFullscreenState = false;
   const ytbPreview = window.ytbPreview.create({ id: 'ytb-actions-preview', maxWidth: 520, minWidth: 300, positionMode: 'document' });
   const externalLinkIcon = '<svg class="yt-summary-external-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7"></path><path d="M21 3l-9 9"></path><path d="M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"></path></svg>';
   const SYNC_PROGRESS_STATUS_KEY = 'playlist-sync-progress';
@@ -94,11 +97,19 @@
       clearInterval(watchControlsWatchdogId);
       watchControlsWatchdogId = null;
     }
+    if (fullscreenWatchdogId) {
+      clearInterval(fullscreenWatchdogId);
+      fullscreenWatchdogId = null;
+    }
     watchControlsRetryIds.forEach(id => clearTimeout(id));
     watchControlsRetryIds.clear();
     if (watchControlsEventsController) {
       watchControlsEventsController.abort();
       watchControlsEventsController = null;
+    }
+    if (fullscreenEventsController) {
+      fullscreenEventsController.abort();
+      fullscreenEventsController = null;
     }
     if (quickSaveObserver) {
       quickSaveObserver.disconnect();
@@ -659,6 +670,45 @@
     window.location.assign(url);
   }
 
+  function isYoutubeFullscreenActive() {
+    return !!(
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.querySelector('.html5-video-player.ytp-fullscreen')
+    );
+  }
+
+  function sendFullscreenStateToBackground(force = false) {
+    const fullscreen = isYoutubeFullscreenActive();
+    if (!force && fullscreen === lastFullscreenState) return;
+    lastFullscreenState = fullscreen;
+
+    try {
+      chrome.runtime.sendMessage({
+        action: 'setYoutubeFullscreenState',
+        fullscreen
+      }, () => {
+        const error = chrome.runtime && chrome.runtime.lastError;
+        if (error) {
+          handleExtensionContextError(error);
+        }
+      });
+    } catch (error) {
+      handleExtensionContextError(error);
+    }
+  }
+
+  function startFullscreenStateWatcher() {
+    fullscreenEventsController = new AbortController();
+    const options = { signal: fullscreenEventsController.signal };
+
+    document.addEventListener('fullscreenchange', () => sendFullscreenStateToBackground(), options);
+    document.addEventListener('webkitfullscreenchange', () => sendFullscreenStateToBackground(), options);
+    window.addEventListener('resize', () => sendFullscreenStateToBackground(), options);
+    fullscreenWatchdogId = setInterval(() => sendFullscreenStateToBackground(), 700);
+    sendFullscreenStateToBackground(true);
+  }
+
   panelApi = window.ytbPanel.create({
     mode: 'floating',
     syncStatusStorageKey: 'dockedSyncStatus',
@@ -675,6 +725,8 @@
     openVideo: openVideoFromPanel,
     onVideosChanged: updateWatchControlsAfterPanelChange
   });
+
+  startFullscreenStateWatcher();
 
   safeRuntimeOnMessage((request, sender, sendResponse) => {
     if (request.action === 'cleanupExtension') {

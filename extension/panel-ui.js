@@ -169,6 +169,8 @@
   }
   let toggleBtn = null;
   let showFloatingPanelButton = true;
+  let hideSidePanelOnFullscreen = true;
+  let panelHiddenForFullscreen = false;
 
   if (isFloating) {
     panel.style.display = 'none';
@@ -2877,9 +2879,11 @@
     open() {
       panel.style.display = 'flex';
       safeStorageSet({ panelMode: options.mode || 'docked', panelOpen: isFloating });
+      updateFloatingToggleVisibility();
       loadPlaylists();
     },
     close() {
+      panelHiddenForFullscreen = false;
       panel.style.display = 'none';
       if (isFloating) safeStorageSet({ panelOpen: false });
     },
@@ -2935,8 +2939,23 @@
   }
 
   function updateFloatingToggleVisibility() {
-    if (!toggleBtn) return;
-    toggleBtn.classList.toggle('yt-playlist-alt-toggle--hidden', !showFloatingPanelButton || isYoutubeFullscreenActive());
+    const fullscreen = isYoutubeFullscreenActive();
+    const shouldHideForFullscreen = fullscreen && hideSidePanelOnFullscreen;
+    if (toggleBtn) toggleBtn.classList.toggle('yt-playlist-alt-toggle--hidden', !showFloatingPanelButton || shouldHideForFullscreen);
+    if (!isFloating) return;
+
+    if (shouldHideForFullscreen) {
+      if (panel.style.display !== 'none') {
+        panelHiddenForFullscreen = true;
+        panel.style.display = 'none';
+      }
+      return;
+    }
+
+    if (panelHiddenForFullscreen) {
+      panelHiddenForFullscreen = false;
+      panel.style.display = 'flex';
+    }
   }
 
   function watchFullscreenToggleVisibility() {
@@ -3275,6 +3294,7 @@
 
   function applyStoredState(res) {
     showFloatingPanelButton = res.showFloatingPanelButton !== false;
+    hideSidePanelOnFullscreen = res.hideSidePanelOnFullscreen !== false;
 
     if (isFloating) {
       if (res.panelWidth) panel.style.width = `${res.panelWidth}px`;
@@ -3517,6 +3537,11 @@
       if (showFloatingPanelButton) ensureFloatingToggle();
       else updateFloatingToggleVisibility();
     }
+
+    if (changes.hideSidePanelOnFullscreen) {
+      hideSidePanelOnFullscreen = changes.hideSidePanelOnFullscreen.newValue !== false;
+      updateFloatingToggleVisibility();
+    }
   });
 
   const storageKeys = [
@@ -3538,7 +3563,8 @@
     'pendingRemovals',
     'dockedSyncStatus',
     YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY,
-    'showFloatingPanelButton'
+    'showFloatingPanelButton',
+    'hideSidePanelOnFullscreen'
   ];
 
   safeStorageGet(storageKeys, res => {

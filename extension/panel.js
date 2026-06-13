@@ -1,4 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
+  let dockedPanelTabId = null;
+
   function sendRuntimeMessage(message) {
     return new Promise(resolve => {
       chrome.runtime.sendMessage(message, response => {
@@ -11,6 +13,21 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
+
+  async function rememberDockedPanelOpen() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    dockedPanelTabId = tab && tab.id ? tab.id : null;
+    await sendRuntimeMessage({ action: 'markDockedSidePanelOpen', tabId: dockedPanelTabId });
+  }
+
+  function rememberDockedPanelClosed() {
+    if (!dockedPanelTabId) return;
+    chrome.runtime.sendMessage({ action: 'markDockedSidePanelClosed', tabId: dockedPanelTabId }, () => {});
+  }
+
+  rememberDockedPanelOpen().catch(() => {});
+  window.addEventListener('pagehide', rememberDockedPanelClosed);
+  window.addEventListener('beforeunload', rememberDockedPanelClosed);
 
   window.ytbPanel.create({
     mode: 'docked',

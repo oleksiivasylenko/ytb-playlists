@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const summarySettingsSave = document.getElementById('summary-settings-save');
   const summarySettingsStatus = document.getElementById('summary-settings-status');
   const showFloatingPanelButton = document.getElementById('show-floating-panel-button');
+  const hideSidePanelOnFullscreen = document.getElementById('hide-side-panel-on-fullscreen');
   const pageSettingsStatus = document.getElementById('page-settings-status');
 
   let playlists = [];
@@ -281,8 +282,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function loadPageSettings() {
-    const settings = await storageGet(['showFloatingPanelButton']);
+    const settings = await storageGet(['showFloatingPanelButton', 'hideSidePanelOnFullscreen']);
     showFloatingPanelButton.checked = settings.showFloatingPanelButton !== false;
+    hideSidePanelOnFullscreen.checked = settings.hideSidePanelOnFullscreen !== false;
     setStatus(pageSettingsStatus, '');
   }
 
@@ -443,6 +445,20 @@ document.addEventListener('DOMContentLoaded', () => {
       setStatus(pageSettingsStatus, err.message || 'Failed to save page settings.', 'error');
     } finally {
       showFloatingPanelButton.disabled = false;
+    }
+  });
+
+  hideSidePanelOnFullscreen.addEventListener('change', async () => {
+    hideSidePanelOnFullscreen.disabled = true;
+    setStatus(pageSettingsStatus, 'Saving...');
+
+    try {
+      await storageSet({ hideSidePanelOnFullscreen: hideSidePanelOnFullscreen.checked });
+      setStatus(pageSettingsStatus, 'Saved.', 'success');
+    } catch (err) {
+      setStatus(pageSettingsStatus, err.message || 'Failed to save page settings.', 'error');
+    } finally {
+      hideSidePanelOnFullscreen.disabled = false;
     }
   });
 
