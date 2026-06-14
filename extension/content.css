@@ -281,6 +281,11 @@
   padding: 18px;
 }
 
+.yt-sync-load-confirm-modal {
+  position: fixed;
+  z-index: 10000000;
+}
+
 .yt-sync-cleanup-dialog {
   width: min(100%, 320px);
   background: #212121;

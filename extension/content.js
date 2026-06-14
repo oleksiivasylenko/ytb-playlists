@@ -30,6 +30,7 @@
   const YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY = 'youtubeCleanupReviewPrompt';
   const SYNC_MAX_DURATION_MS = 20 * 60 * 1000;
   const SYNC_IDLE_TIMEOUT_MS = 75 * 1000;
+  const SYNC_MISMATCH_IDLE_ROUNDS = 10;
   const COMMENTS_SYNC_MAX_DURATION_MS = 3 * 60 * 1000;
   const COMMENTS_SYNC_IDLE_TIMEOUT_MS = 18 * 1000;
   const COMMENTS_SYNC_PROGRESS_WAIT_MS = 6500;
@@ -286,6 +287,79 @@
     if (context) context.lastProgressAt = Date.now();
   }
 
+  function getPlaylistShortfall(expectedCount, seenCount) {
+    const expected = Number(expectedCount);
+    const seen = Number(seenCount);
+    if (!Number.isFinite(expected) || !Number.isFinite(seen)) return 0;
+    return Math.max(0, expected - seen);
+  }
+
+  function formatShortfallWarning(expectedCount, seenCount, shortfallCount, confirmedFullLoad) {
+    const action = confirmedFullLoad
+      ? 'You confirmed all videos loaded; missing DB check ran.'
+      : 'Missing DB check was skipped because full load was not confirmed.';
+    return ` YouTube lists ${expectedCount}, but only ${seenCount} video IDs loaded; ${shortfallCount} did not load. ${action}`;
+  }
+
+  async function confirmPlaylistFullyLoaded(expectedCount, seenCount, shortfallCount, syncContext = null) {
+    markSyncProgress(syncContext);
+
+    return new Promise(resolve => {
+      document.getElementById('ytb-sync-load-confirm')?.remove();
+
+      const overlay = document.createElement('div');
+      overlay.id = 'ytb-sync-load-confirm';
+      overlay.className = 'yt-sync-cleanup-modal yt-sync-load-confirm-modal';
+
+      const dialog = document.createElement('div');
+      dialog.className = 'yt-sync-cleanup-dialog';
+
+      const title = document.createElement('div');
+      title.className = 'yt-sync-cleanup-title';
+      title.textContent = 'Confirm playlist load?';
+
+      const text = document.createElement('div');
+      text.className = 'yt-sync-cleanup-text';
+      text.textContent = `YouTube says this playlist has ${expectedCount} videos, but sync loaded ${seenCount}. If the page reached the bottom and no more videos load, confirm to mark ${shortfallCount} missing DB entries as removed or unavailable.`;
+
+      const actions = document.createElement('div');
+      actions.className = 'yt-sync-cleanup-actions';
+
+      const noBtn = document.createElement('button');
+      noBtn.type = 'button';
+      noBtn.dataset.choice = 'no';
+      noBtn.textContent = 'No, skip missing check';
+
+      const yesBtn = document.createElement('button');
+      yesBtn.type = 'button';
+      yesBtn.dataset.choice = 'yes';
+      yesBtn.textContent = 'Yes, all loaded';
+
+      actions.appendChild(noBtn);
+      actions.appendChild(yesBtn);
+      dialog.appendChild(title);
+      dialog.appendChild(text);
+      dialog.appendChild(actions);
+      overlay.appendChild(dialog);
+
+      const finish = value => {
+        overlay.remove();
+        markSyncProgress(syncContext);
+        resolve(value);
+      };
+
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) finish(false);
+        const button = event.target.closest && event.target.closest('button[data-choice]');
+        if (!button) return;
+        finish(button.dataset.choice === 'yes');
+      });
+
+      document.body.appendChild(overlay);
+      yesBtn.focus();
+    });
+  }
+
   async function withSyncTimeout(promise, ms, label, syncContext) {
     if (syncContext) assertSyncCanContinue(syncContext);
 
@@ -518,6 +592,8 @@
       let idleBottomRounds = 0;
       let hardIdleRounds = 0;
       let shortfallWarning = '';
+      let shortfallCount = 0;
+      let shortfallExpectedCount = 0;
 
       for (let round = 0; round < 1600; round++) {
         assertSyncCanContinue(syncContext);
@@ -553,9 +629,9 @@
           panel.setSyncStatus(`Synced ${seenIds.size} / ${expectedCount}. Waiting for YouTube to load more...`, 'busy', {
             key: SYNC_PROGRESS_STATUS_KEY
           });
-          if (hardIdleRounds >= 12 && getScrollMetrics().nearBottom) {
-            const missingCount = expectedCount - seenIds.size;
-            shortfallWarning = ` YouTube lists ${expectedCount}, but only ${seenIds.size} video IDs loaded; ${missingCount} are probably unavailable placeholders.`;
+          if (hardIdleRounds >= SYNC_MISMATCH_IDLE_ROUNDS && getScrollMetrics().nearBottom) {
+            shortfallExpectedCount = expectedCount;
+            shortfallCount = getPlaylistShortfall(expectedCount, seenIds.size);
             break;
           }
           continue;
@@ -572,16 +648,34 @@
       }
 
       const finalExpectedCount = getExpectedPlaylistVideoCount();
-      if (finalExpectedCount && seenIds.size < finalExpectedCount) {
-        const missingCount = finalExpectedCount - seenIds.size;
-        shortfallWarning = shortfallWarning || ` YouTube lists ${finalExpectedCount}, but only ${seenIds.size} video IDs loaded; ${missingCount} are probably unavailable placeholders.`;
+      shortfallExpectedCount = finalExpectedCount || shortfallExpectedCount;
+      if (shortfallExpectedCount) {
+        shortfallCount = getPlaylistShortfall(shortfallExpectedCount, seenIds.size);
+      }
+
+      let skipMissingCheck = false;
+      if (shortfallCount > 0) {
+        panel.setSyncStatus(`Loaded ${seenIds.size} / ${shortfallExpectedCount}. Waiting for confirmation...`, 'busy');
+        const confirmedFullLoad = await confirmPlaylistFullyLoaded(
+          shortfallExpectedCount,
+          seenIds.size,
+          shortfallCount,
+          syncContext
+        );
+        skipMissingCheck = !confirmedFullLoad;
+        shortfallWarning = formatShortfallWarning(
+          shortfallExpectedCount,
+          seenIds.size,
+          shortfallCount,
+          confirmedFullLoad
+        );
       }
 
       assertSyncCanContinue(syncContext);
-      panel.setSyncStatus('Checking missing videos from DB...', 'busy');
+      panel.setSyncStatus(skipMissingCheck ? 'Finishing sync without missing check...' : 'Checking missing videos from DB...', 'busy');
       const finalized = await withSyncTimeout(
         window.api.finalizeSync(run.id, playlist.id, {
-          skipMissingCheck: !!shortfallWarning
+          skipMissingCheck
         }),
         5 * 60 * 1000,
         'Finalizing sync',
@@ -589,7 +683,7 @@
       );
       const summary = finalized.run;
 
-      if (cleanup && !shortfallWarning) {
+      if (cleanup && !skipMissingCheck) {
         const notFoundIds = Array.from(cleanup.ids).filter(id => !cleanup.attempted.has(id));
         for (const videoId of notFoundIds) {
           try {
