@@ -142,8 +142,17 @@
     return true;
   }
 
+  function isLocalServerUnavailableError(error) {
+    const message = String(error && (error.message || error) || '').trim().toLowerCase();
+    return message === 'failed to fetch' ||
+      message === 'fetch failed' ||
+      message.includes('net::err_connection_refused') ||
+      message.includes('networkerror when attempting to fetch resource');
+  }
+
   function logContentError(message, error) {
     if (handleExtensionContextError(error)) return;
+    if (isLocalServerUnavailableError(error)) return;
     console.error(message, error);
   }
 
