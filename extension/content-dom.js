@@ -333,6 +333,33 @@
     return document.querySelector('ytd-comments#comments, ytd-comments');
   }
 
+  function isVisibleElement(node) {
+    if (!node || node.closest('[hidden]')) return false;
+
+    const rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+
+    const style = window.getComputedStyle(node);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  }
+
+  function hasActiveCommentsContinuationLoader() {
+    const commentsRoot = findCommentsSection();
+    if (!commentsRoot) return false;
+
+    const loaders = Array.from(commentsRoot.querySelectorAll([
+      'ytd-continuation-item-renderer[is-comments-section] tp-yt-paper-spinner[active]',
+      'ytd-continuation-item-renderer[is-comments-section] #spinnerContainer.active'
+    ].join(',')));
+
+    return loaders.some(loader => {
+      const spinner = loader.closest('tp-yt-paper-spinner') || loader;
+      const continuation = loader.closest('ytd-continuation-item-renderer');
+      if (continuation && (continuation.hidden || continuation.hasAttribute('hidden'))) return false;
+      return isVisibleElement(spinner) || isVisibleElement(loader);
+    });
+  }
+
   function getHiddenReplyCount() {
     const commentsRoot = findCommentsSection();
     if (!commentsRoot) return 0;
@@ -464,6 +491,7 @@
     getExpectedCommentCount,
     collectLoadedComments,
     findCommentsSection,
+    hasActiveCommentsContinuationLoader,
     getHiddenReplyCount,
     getLoadedCommentCount,
     getCommentSyncStats,

@@ -33,7 +33,7 @@
   const SYNC_MISMATCH_IDLE_ROUNDS = 10;
   const COMMENTS_SYNC_MAX_DURATION_MS = 3 * 60 * 1000;
   const COMMENTS_SYNC_IDLE_TIMEOUT_MS = 18 * 1000;
-  const COMMENTS_SYNC_PROGRESS_WAIT_MS = 6500;
+  const COMMENTS_SYNC_PROGRESS_WAIT_MS = 10000;
   const COMMENTS_SYNC_PROGRESS_POLL_MS = 500;
 
   const {
@@ -60,6 +60,7 @@
     getExpectedCommentCount,
     collectLoadedComments,
     findCommentsSection,
+    hasActiveCommentsContinuationLoader,
     getHiddenReplyCount,
     getLoadedCommentCount,
     getCommentSyncStats,
@@ -966,7 +967,7 @@
       return;
     }
 
-    scrollDownForSync();
+    scrollDownForSync(context);
   }
 
   function getAskPanel() {
@@ -1094,18 +1095,23 @@
 
   async function waitForCommentsSyncProgress(context, panel, previous) {
     const startedAt = Date.now();
+    let stats = updateAskCommentStats(panel);
+    let loaderSeen = hasActiveCommentsContinuationLoader();
 
     while (Date.now() - startedAt < COMMENTS_SYNC_PROGRESS_WAIT_MS) {
       await delay(COMMENTS_SYNC_PROGRESS_POLL_MS);
       assertCommentsSyncCanContinue(context);
+      scrollTowardComments(context);
 
-      const stats = updateAskCommentStats(panel);
+      stats = updateAskCommentStats(panel);
       if (isCommentsSyncComplete(stats) || hasCommentsSyncProgress(stats, previous)) {
         return { stats, progressed: true };
       }
+
+      if (hasActiveCommentsContinuationLoader()) loaderSeen = true;
     }
 
-    return { stats: updateAskCommentStats(panel), progressed: false };
+    return { stats, progressed: loaderSeen };
   }
 
   async function updateAskTranscriptToggleState(panel) {
