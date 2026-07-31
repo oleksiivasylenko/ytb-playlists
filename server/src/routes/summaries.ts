@@ -6,12 +6,14 @@ import {
   askVideoQuestion,
   ensureSummary,
   ensureTags,
+  getAskHistory,
   getSummary,
   getSummarySettings,
   getSummaryStatus,
   getTags,
   getTagStatus,
   normalizeSummaryMode,
+  saveAskHistoryEntry,
   updateSummarySettings
 } from '../summaries';
 import { askRequestSchema, normalizeVideoId } from '../validation';
@@ -91,6 +93,13 @@ router.put('/summary-settings', (req, res) => {
   }));
 });
 
+router.get('/videos/:id/ask-history', (req, res) => {
+  const videoId = normalizeVideoId(req.params.id);
+  if (!videoId) return res.status(400).json({ error: 'Valid videoId is required' });
+
+  res.json({ videoId, entries: getAskHistory(videoId) });
+});
+
 router.post('/videos/:id/ask', async (req, res) => {
   const videoId = normalizeVideoId(req.params.id);
   if (!videoId) return res.status(400).json({ error: 'Valid videoId is required' });
@@ -117,7 +126,17 @@ router.post('/videos/:id/ask', async (req, res) => {
       expectedCommentCount: payload.expectedCommentCount
     });
 
-    res.json(result);
+    const historyEntry = saveAskHistoryEntry({
+      videoId,
+      question: payload.question,
+      answer: result.answer,
+      model: result.model,
+      providerResponseId: result.providerResponseId,
+      commentCount: result.commentCount,
+      transcriptIncluded: result.transcriptIncluded
+    });
+
+    res.json({ ...result, historyEntry });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to ask about video';
     if (error instanceof TranscriptUnavailableError) {

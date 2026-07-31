@@ -421,6 +421,12 @@ const api = {
     }
     return data;
   },
+  async getAskHistory(videoId) {
+    const res = await apiFetch(`${API_BASE}/videos/${videoId}/ask-history`);
+    const data = await readJsonResponse(res, 'Failed to load saved conversation');
+    if (!res.ok) throw new Error(data.error || 'Failed to load saved conversation');
+    return data;
+  },
   async startSync(payload) {
     const res = await apiFetch(`${API_BASE}/sync/start`, {
       method: 'POST',

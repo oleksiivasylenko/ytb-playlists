@@ -178,6 +178,19 @@ export function initDb() {
       FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS video_ask_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      video_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      model TEXT NOT NULL,
+      provider_response_id TEXT,
+      comment_count INTEGER NOT NULL DEFAULT 0,
+      transcript_included INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+    );
+
     CREATE UNIQUE INDEX IF NOT EXISTS idx_playlists_source
       ON playlists(source_type, source_id)
       WHERE source_type IS NOT NULL AND source_id IS NOT NULL;
@@ -193,6 +206,9 @@ export function initDb() {
 
     CREATE INDEX IF NOT EXISTS idx_video_summaries_updated
       ON video_summaries(updated_at);
+
+    CREATE INDEX IF NOT EXISTS idx_video_ask_history_video
+      ON video_ask_history(video_id, id);
   `);
 
   ensureColumn('playlist_videos', 'youtube_removed_at', 'DATETIME');

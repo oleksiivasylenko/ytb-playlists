@@ -874,6 +874,7 @@
   let lastWatchStateRefreshAt = 0;
   const watchTranscriptLoads = new Set();
   const watchSummaryLoads = new Set();
+  const askHistoryLoads = new WeakMap();
   const WATCH_STATE_REFRESH_INTERVAL = 5000;
 
   function withWatchTimeout(promise, ms, label) {
@@ -981,7 +982,7 @@
     status.className = state ? `ytb-ask-status ytb-ask-status--${state}` : 'ytb-ask-status';
   }
 
-  function createAskHistoryEntry(panel, question) {
+  function createAskHistoryEntry(panel, question, options = {}) {
     const history = panel && panel.querySelector('.ytb-ask-history');
     if (!history) return null;
 
@@ -1003,13 +1004,14 @@
     item.appendChild(questionEl);
     item.appendChild(metaEl);
     item.appendChild(answerEl);
-    history.appendChild(item);
-    item.scrollIntoView({ block: 'nearest' });
+    if (options.prepend) history.prepend(item);
+    else history.appendChild(item);
+    if (options.scroll !== false) item.scrollIntoView({ block: 'nearest' });
 
     return { item, metaEl, answerEl };
   }
 
-  function updateAskHistoryEntry(entry, text, state = '', meta = '') {
+  function updateAskHistoryEntry(entry, text, state = '', meta = '', options = {}) {
     if (!entry || !entry.answerEl) return;
     entry.answerEl.textContent = text || '';
     entry.answerEl.className = state
@@ -1021,7 +1023,56 @@
         ? 'ytb-ask-history-meta ytb-ask-history-meta--error'
         : 'ytb-ask-history-meta';
     }
-    entry.item?.scrollIntoView({ block: 'nearest' });
+    if (options.scroll !== false) entry.item?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function formatAskHistoryMeta(entry) {
+    return `Done. Used ${entry.commentCount ?? 0} comments${entry.transcriptIncluded ? ' + transcript' : ''}.`;
+  }
+
+  function renderAskHistory(panel, entries) {
+    const history = panel && panel.querySelector('.ytb-ask-history');
+    if (!history) return;
+
+    history.replaceChildren();
+    entries.forEach(item => {
+      const entry = createAskHistoryEntry(panel, item.question || '', { scroll: false });
+      updateAskHistoryEntry(entry, item.answer || '', 'success', formatAskHistoryMeta(item), { scroll: false });
+    });
+  }
+
+  function loadAskHistory(panel) {
+    const videoId = getVideoIdFromUrl();
+    if (!videoId || !panel) return Promise.resolve();
+    if (panel.dataset.askHistoryVideoId === videoId && panel.dataset.askHistoryLoaded === '1') {
+      return Promise.resolve();
+    }
+
+    const activeLoad = askHistoryLoads.get(panel);
+    if (activeLoad) return activeLoad;
+
+    panel.dataset.askHistoryVideoId = videoId;
+    panel.dataset.askHistoryLoaded = '0';
+
+    const load = withWatchTimeout(window.api.getAskHistory(videoId), 8000, 'getAskHistory')
+      .then(result => {
+        if (!panel.isConnected || getVideoIdFromUrl() !== videoId) return;
+        if (panel.dataset.askHistoryVideoId !== videoId) return;
+        renderAskHistory(panel, Array.isArray(result.entries) ? result.entries : []);
+        panel.dataset.askHistoryLoaded = '1';
+      })
+      .catch(error => {
+        if (panel.isConnected && getVideoIdFromUrl() === videoId) {
+          setAskStatus(panel, 'Saved conversation could not be loaded.', 'error');
+        }
+        logContentError('Ask panel: failed to load saved conversation', error);
+      })
+      .finally(() => {
+        if (askHistoryLoads.get(panel) === load) askHistoryLoads.delete(panel);
+      });
+
+    askHistoryLoads.set(panel, load);
+    return load;
   }
 
   function getAskMode(panel) {
@@ -1073,6 +1124,12 @@
     panel.dataset.askTranscriptReady = ready ? '1' : '0';
     if (!ready && getAskMode(panel) === 'video') panel.dataset.askMode = 'comments';
     if (ready && panel.dataset.askModeUserSet !== '1') panel.dataset.askMode = 'video';
+    if (ready) {
+      const status = panel.querySelector('.ytb-ask-status');
+      if (status && status.classList.contains('ytb-ask-status--error') && status.textContent.startsWith('Transcript ')) {
+        setAskStatus(panel, '');
+      }
+    }
     updateAskModeSwitch(panel);
   }
 
@@ -1276,12 +1333,17 @@
       return;
     }
 
-    stopActiveCommentsSync('Comment sync stopped before Ask about.', { silent: true });
-    const historyEntry = createAskHistoryEntry(panel, question);
+    textarea.value = '';
     askButton.disabled = true;
-    setAskStatus(panel, 'Preparing context...', 'busy');
+    let historyEntry = null;
 
     try {
+      await loadAskHistory(panel);
+      if (!panel.isConnected || getVideoIdFromUrl() !== videoId) return;
+
+      stopActiveCommentsSync('Comment sync stopped before Ask about.', { silent: true });
+      historyEntry = createAskHistoryEntry(panel, question, { prepend: true });
+      setAskStatus(panel, 'Preparing context...', 'busy');
       await ensureCurrentVideoStored(videoId);
       const stats = updateAskCommentStats(panel);
       const transcript = await getTranscriptForAsk(videoId, panel);
@@ -1379,8 +1441,8 @@
 
     controls.appendChild(modeSwitch);
     controls.appendChild(counter);
-    controls.appendChild(syncButton);
     controls.appendChild(askButton);
+    controls.appendChild(syncButton);
 
     const status = document.createElement('div');
     status.className = 'ytb-ask-status';
@@ -1395,6 +1457,7 @@
 
     panel.dataset.askMode = 'comments';
     panel.dataset.askTranscriptReady = '0';
+    panel.dataset.askHistoryLoaded = '0';
     updateAskModeSwitch(panel);
     updateAskCommentStats(panel);
     return panel;
@@ -1429,6 +1492,7 @@
     if (willOpen) {
       updateAskCommentStats(panel);
       updateAskTranscriptToggleState(panel);
+      loadAskHistory(panel);
       panel.querySelector('.ytb-ask-textarea')?.focus();
     } else {
       stopActiveCommentsSync('Comment sync stopped.', { silent: true });
@@ -1532,6 +1596,9 @@
       const transcriptBusy = watchTranscriptLoads.has(videoId);
       const summaryBusy = watchSummaryLoads.has(videoId);
 
+      if (getVideoIdFromUrl() === videoId) {
+        setAskTranscriptReady(getAskPanel(), !!transcriptStatus.hasTranscript);
+      }
       setYtbActionButtonState(transcriptBtn, !!transcriptStatus.hasTranscript, transcriptBusy, false, 'T');
       transcriptBtn.title = transcriptBusy
         ? 'Fetching transcript'
@@ -1796,9 +1863,8 @@
   function findWatchActionTarget(selector) {
     const candidates = Array.from(document.querySelectorAll(selector));
     const watchCandidates = candidates.filter(node => node.closest('ytd-watch-metadata, #above-the-fold'));
-    const scopedCandidates = watchCandidates.length ? watchCandidates : candidates;
 
-    return scopedCandidates.find(isVisibleActionTarget) || null;
+    return watchCandidates.find(isVisibleActionTarget) || null;
   }
 
   function findWatchActionsContainer() {
@@ -1829,9 +1895,11 @@
   }
 
   function isMountedWatchControlVisible(wrapper, requiredSelectors) {
+    const target = findWatchActionsContainer();
     return !!wrapper &&
       wrapper.isConnected &&
       !!wrapper.parentElement &&
+      wrapper.parentElement === target &&
       isVisibleActionTarget(wrapper.parentElement) &&
       isVisibleActionTarget(wrapper) &&
       requiredSelectors.every(selector => wrapper.querySelector(selector));
