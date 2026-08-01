@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = '/api';
 
 const _cache = new Map();
 const CACHE_TTL = 30000;
@@ -6,10 +6,7 @@ const CACHE_TTL = 30000;
 const nativeFetch = typeof fetch === 'function' ? fetch.bind(globalThis) : null;
 
 function shouldProxyApiFetch() {
-  return typeof window !== 'undefined' &&
-    window.location &&
-    window.location.hostname === 'www.youtube.com' &&
-    typeof chrome !== 'undefined' &&
+  return typeof chrome !== 'undefined' &&
     chrome.runtime &&
     typeof chrome.runtime.sendMessage === 'function';
 }
@@ -64,7 +61,10 @@ function createProxyResponse(payload) {
 }
 
 async function apiFetch(url, options = {}) {
-  if (!shouldProxyApiFetch()) return nativeFetch(url, options);
+  if (!shouldProxyApiFetch()) {
+    const fallbackUrl = url.startsWith('/api') ? `http://localhost:3001${url}` : url;
+    return nativeFetch(fallbackUrl, options);
+  }
 
   const response = await sendRuntimeMessage({
     action: 'apiFetch',
@@ -77,6 +77,57 @@ async function apiFetch(url, options = {}) {
   });
 
   return createProxyResponse(response);
+}
+
+function subscribeApiEvents(path, eventName, onEvent, onError) {
+  if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.connect !== 'function') {
+    throw new Error('Extension event proxy is unavailable.');
+  }
+
+  const port = chrome.runtime.connect({ name: 'api-events' });
+  let closed = false;
+
+  function close() {
+    if (closed) return;
+    closed = true;
+    try {
+      port.disconnect();
+    } catch (error) {
+    }
+  }
+
+  function fail(message) {
+    if (closed) return;
+    close();
+    if (onError) onError(new Error(message || 'Event stream failed.'));
+  }
+
+  port.onMessage.addListener(message => {
+    if (!message || closed) return;
+    if (message.type === 'error') {
+      fail(message.error);
+      return;
+    }
+    if (message.type !== 'event' || message.event !== eventName) return;
+
+    try {
+      onEvent(JSON.parse(message.data));
+    } catch (error) {
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    if (closed) return;
+    let message = 'Event stream disconnected.';
+    try {
+      if (chrome.runtime.lastError) message = chrome.runtime.lastError.message;
+    } catch (error) {
+    }
+    fail(message);
+  });
+
+  port.postMessage({ action: 'subscribeApiEvents', path });
+  return { close };
 }
 
 function cacheGet(key) {
@@ -279,11 +330,11 @@ const api = {
     const res = await apiFetch(`${API_BASE}/videos/${videoId}`);
     return res.json();
   },
-  getTranscriptEventsUrl() {
-    return `${API_BASE}/transcripts/events`;
+  subscribeTranscriptEvents(onEvent, onError) {
+    return subscribeApiEvents(`${API_BASE}/transcripts/events`, 'transcript', onEvent, onError);
   },
-  getSummaryEventsUrl() {
-    return `${API_BASE}/summaries/events`;
+  subscribeSummaryEvents(onEvent, onError) {
+    return subscribeApiEvents(`${API_BASE}/summaries/events`, 'summary', onEvent, onError);
   },
   async getSummarySettings() {
     const res = await apiFetch(`${API_BASE}/summary-settings`);

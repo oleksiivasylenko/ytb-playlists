@@ -18,6 +18,7 @@
   ],
   "host_permissions": [
     "http://localhost:3001/*",
+    "https://ytb-playlists.vasdev.bid/*",
     "https://www.youtube.com/*"
   ],
   "background": {

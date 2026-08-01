@@ -1,4 +1,5 @@
 const statusEl = document.getElementById('popup-status');
+const apiHostEl = document.getElementById('api-host');
 
 function setStatus(text) {
   statusEl.textContent = text || '';
@@ -12,6 +13,21 @@ async function getActiveTab() {
 function isYoutubeTab(tab) {
   return !!(tab && tab.url && tab.url.startsWith('https://www.youtube.com/'));
 }
+
+function loadApiHost() {
+  chrome.runtime.sendMessage({ action: 'getApiHost' }, response => {
+    if (chrome.runtime.lastError || !response || !response.success) {
+      apiHostEl.textContent = 'Host: not configured';
+      apiHostEl.title = response && response.error ? response.error : 'API host is not configured.';
+      return;
+    }
+
+    apiHostEl.textContent = `Host: ${response.host}`;
+    apiHostEl.title = response.apiBaseUrl;
+  });
+}
+
+loadApiHost();
 
 document.getElementById('open-dock-panel').addEventListener('click', async () => {
   setStatus('');

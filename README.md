@@ -4,7 +4,7 @@ If you are tired of the chaos in YouTube Watch Later, this extension helps you t
 
 I built it for myself because I wanted more control over my YouTube video lists. During the first three days of testing, I reduced my Watch Later list from 1,250 videos to 670 - 580 fewer videos. Most of them were either no longer relevant, not worth watching anymore, or could be handled faster by reading a summary instead of spending time on the full video.
 
-The goal is simple: make it easy to review, filter, summarize, move, restore, and clean up old or uninteresting videos. The project combines a Chrome/Chromium extension with a local Node.js API and SQLite storage, so your playlist management stays local and under your control.
+The goal is simple: make it easy to review, filter, summarize, move, restore, and clean up old or uninteresting videos. The project combines a Chrome/Chromium extension with a Node.js API and SQLite storage. The API can run locally or on a private remote server.
 
 ## Features
 
@@ -70,7 +70,7 @@ ytb-playlists/
   database.sqlite             Local runtime database, ignored by git
 ```
 
-The server runs at `http://localhost:3001`, and the extension talks to it through `http://localhost:3001/api`.
+The server listens on port `3001` by default. Every `/api` route requires the shared `X-API-Token` header and is protected by per-IP adaptive rate limiting.
 
 ## Server Setup
 
@@ -96,6 +96,13 @@ The server runs at `http://localhost:3001`, and the extension talks to it throug
 
    ```env
    PORT=3001
+   API_TOKEN=replace_with_a_long_random_token
+   TRUST_PROXY=false
+   RATE_LIMIT_WINDOW_MS=60000
+   RATE_LIMIT_MAX_REQUESTS=120
+   RATE_LIMIT_BLOCK_MS=30000
+   RATE_LIMIT_MAX_BLOCK_MS=900000
+   RATE_LIMIT_STRIKE_RESET_MS=900000
    FETCHTRANSCRIPT_API_KEY=yt_your_api_key
    FETCHTRANSCRIPT_LANGUAGES=en,uk,ru
    OPENROUTER_API_KEY=sk-or-v1-your_openrouter_key
@@ -114,14 +121,26 @@ npm run build
 npm start
 ```
 
+To run the API with Docker:
+
+```bash
+cd server
+docker compose up -d --build
+```
+
+The Compose configuration stores SQLite data in a named volume and publishes the API only on `127.0.0.1:4319`, ready for a local reverse proxy.
+
 ## Extension Setup
 
-1. Open `chrome://extensions`.
-2. Enable `Developer mode`.
-3. Click `Load unpacked`.
-4. Select the `extension` directory.
-5. Make sure the local server is running on `localhost:3001`.
-6. Open YouTube and use the popup, docked panel, or manager.
+1. Copy `extension/config.example.js` to `extension/config.local.js`.
+2. Set `apiBaseUrl` and use the same `apiToken` value as `API_TOKEN` in `server/.env`.
+3. Open `chrome://extensions`.
+4. Enable `Developer mode`.
+5. Click `Load unpacked`.
+6. Select the `extension` directory.
+7. Open YouTube and use the popup, docked panel, or manager.
+
+For a remote server, set `apiBaseUrl` to an HTTPS URL ending in `/api`, for example `https://playlists.example.com/api`. Reload the extension after changing `config.local.js`.
 
 ## Typical Workflow
 
@@ -135,6 +154,14 @@ npm start
 ## Configuration
 
 - `PORT` - local API port.
+- `DATABASE_PATH` - SQLite database path. Docker uses `/data/database.sqlite` in a persistent volume.
+- `API_TOKEN` - shared secret required in the `X-API-Token` header for every API request.
+- `TRUST_PROXY` - Express proxy trust setting. Use the exact proxy hop count, such as `1`, when the server is behind one trusted reverse proxy; keep `false` when it is directly exposed.
+- `RATE_LIMIT_WINDOW_MS` - request-counting window per IP.
+- `RATE_LIMIT_MAX_REQUESTS` - allowed requests per IP within one window.
+- `RATE_LIMIT_BLOCK_MS` - initial temporary block duration after the limit is exceeded.
+- `RATE_LIMIT_MAX_BLOCK_MS` - maximum block duration.
+- `RATE_LIMIT_STRIKE_RESET_MS` - quiet period after which escalating block history is cleared.
 - `FETCHTRANSCRIPT_API_KEY` - FetchTranscript API key for transcript retrieval.
 - `FETCHTRANSCRIPT_LANGUAGES` - optional comma-separated language priority list, for example `en,uk,ru`.
 - `FETCHTRANSCRIPT_BASE_URL` - optional custom FetchTranscript API endpoint.
@@ -150,6 +177,7 @@ Recommended starter settings and prompts are documented in `BASE_SETTINGS.md`.
 Local data and secrets must not be committed. `.gitignore` covers:
 
 - `server/.env` and any `.env.*` files except examples;
+- `extension/config.local.js`, which contains the shared API token and server URL;
 - SQLite databases: `database.sqlite`, `*.sqlite`, `*.db`;
 - runtime logs;
 - `node_modules`, build output, and TypeScript cache;

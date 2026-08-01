@@ -14,8 +14,18 @@
     }
 
     h3 {
-      margin: 0 0 10px;
+      margin: 0;
       font-size: 15px;
+    }
+
+    #api-host {
+      margin: 4px 0 10px;
+      color: #aaa;
+      font-size: 11px;
+      line-height: 1.3;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .actions {
@@ -63,6 +73,7 @@
 </head>
 <body>
   <h3>Playlist Panel</h3>
+  <div id="api-host" title="API host">Host: loading...</div>
   <div class="actions">
     <button id="open-dock-panel" class="primary">Dock Panel</button>
     <button id="open-summaries">Open Summaries</button>

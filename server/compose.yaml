@@ -1,0 +1,33 @@
+name: ytb-playlists
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ytb-playlists-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /data/database.sqlite
+      PORT: 3001
+      TRUST_PROXY: loopback, linklocal, uniquelocal
+    ports:
+      - 127.0.0.1:4319:3001
+    volumes:
+      - ytb-playlists-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch("http://127.0.0.1:3001/api/health", { headers: { "X-API-Token": process.env.API_TOKEN } }).then(response => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  ytb-playlists-data:

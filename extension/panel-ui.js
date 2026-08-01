@@ -544,45 +544,32 @@
   }
 
   function connectTranscriptEvents() {
-    if (transcriptEventSource || !window.EventSource || !window.api.getTranscriptEventsUrl) return;
+    if (transcriptEventSource || !window.api.subscribeTranscriptEvents) return;
 
-    transcriptEventSource = new EventSource(window.api.getTranscriptEventsUrl());
-    transcriptEventSource.addEventListener('transcript', event => {
-      let payload = null;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
+    transcriptEventSource = window.api.subscribeTranscriptEvents(payload => {
+      if (!payload || !payload.videoId) return;
+
+      if (payload.type === 'transcript_ready') {
+        const updated = updateVideoState(payload.videoId, video => {
+          return {
+            has_transcript: 1,
+            has_timestamped_transcript: 1,
+            transcript_fetched_at: payload.fetchedAt || video.transcript_fetched_at,
+            transcript_unavailable: 0,
+            transcript_unavailable_at: null,
+            transcript_unavailable_reason: null
+          };
+        });
+
+        transcriptLoads.delete(payload.videoId);
+        if (updated) {
+          updateVideoAssetButtons(updated);
+          if (!autoTranscriptRun) setSyncStatus('Transcript is ready.', 'success', { persist: false });
+        }
         return;
       }
 
-      if (!payload || payload.type !== 'transcript_ready' || !payload.videoId) return;
-      const updated = updateVideoState(payload.videoId, video => {
-        return {
-          has_transcript: 1,
-          has_timestamped_transcript: 1,
-          transcript_fetched_at: payload.fetchedAt || video.transcript_fetched_at,
-          transcript_unavailable: 0,
-          transcript_unavailable_at: null,
-          transcript_unavailable_reason: null
-        };
-      });
-
-      transcriptLoads.delete(payload.videoId);
-      if (updated) {
-        updateVideoAssetButtons(updated);
-        if (!autoTranscriptRun) setSyncStatus('Transcript is ready.', 'success', { persist: false });
-      }
-    });
-
-    transcriptEventSource.addEventListener('transcript', event => {
-      let payload = null;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-
-      if (!payload || payload.type !== 'transcript_unavailable' || !payload.videoId) return;
+      if (payload.type !== 'transcript_unavailable') return;
       const updated = updateVideoState(payload.videoId, {
         transcript_unavailable: 1,
         transcript_unavailable_at: payload.transcriptUnavailableAt || null,
@@ -591,27 +578,16 @@
 
       transcriptLoads.delete(payload.videoId);
       if (updated) updateVideoAssetButtons(updated);
-    });
-
-    transcriptEventSource.onerror = () => {
-      transcriptEventSource.close();
+    }, () => {
       transcriptEventSource = null;
       setTimeout(connectTranscriptEvents, 3000);
-    };
+    });
   }
 
   function connectSummaryEvents() {
-    if (summaryEventSource || !window.EventSource || !window.api.getSummaryEventsUrl) return;
+    if (summaryEventSource || !window.api.subscribeSummaryEvents) return;
 
-    summaryEventSource = new EventSource(window.api.getSummaryEventsUrl());
-    summaryEventSource.addEventListener('summary', event => {
-      let payload = null;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-
+    summaryEventSource = window.api.subscribeSummaryEvents(payload => {
       if (!payload || !payload.videoId) return;
       if (payload.type === 'tags_ready') {
         const updated = updateVideoState(payload.videoId, {
@@ -643,13 +619,10 @@
         updateVideoAssetButtons(updated);
         if (!autoSummaryRun) setSyncStatus('Summary is ready.', 'success', { persist: false });
       }
-    });
-
-    summaryEventSource.onerror = () => {
-      summaryEventSource.close();
+    }, () => {
       summaryEventSource = null;
       setTimeout(connectSummaryEvents, 3000);
-    };
+    });
   }
 
   function shouldShowStoredStatus(status) {

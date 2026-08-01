@@ -7,7 +7,9 @@ import {
   defaultAskPrompt
 } from './prompts';
 
-const dbPath = path.resolve(__dirname, '../../database.sqlite');
+const dbPath = process.env.DATABASE_PATH
+  ? path.resolve(process.env.DATABASE_PATH)
+  : path.resolve(__dirname, '../../database.sqlite');
 const db = new Database(dbPath);
 db.pragma('foreign_keys = ON');
 

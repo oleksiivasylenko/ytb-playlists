@@ -1,3 +1,73 @@
+try {
+  importScripts('config.local.js');
+} catch (error) {
+}
+
+function getApiConfig() {
+  const config = globalThis.YTB_PLAYLISTS_CONFIG || {};
+  const apiBaseUrl = String(config.apiBaseUrl || '').trim().replace(/\/+$/, '');
+  const apiToken = String(config.apiToken || '').trim();
+
+  if (!apiBaseUrl || !apiToken) {
+    throw new Error('Copy config.example.js to config.local.js and configure apiBaseUrl and apiToken.');
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(apiBaseUrl);
+  } catch (error) {
+    throw new Error('The extension apiBaseUrl is invalid.');
+  }
+
+  const localHost = parsedUrl.hostname === 'localhost' || parsedUrl.hostname === '127.0.0.1' || parsedUrl.hostname === '[::1]';
+  if (parsedUrl.protocol !== 'https:' && !(parsedUrl.protocol === 'http:' && localHost)) {
+    throw new Error('The remote API must use HTTPS.');
+  }
+  if (!parsedUrl.pathname.endsWith('/api')) {
+    throw new Error('The extension apiBaseUrl must end with /api.');
+  }
+
+  return { apiBaseUrl, apiToken };
+}
+
+function resolveApiUrl(path) {
+  if (typeof path !== 'string' || (path !== '/api' && !path.startsWith('/api/'))) {
+    throw new Error('Unsupported API proxy URL.');
+  }
+
+  const config = getApiConfig();
+  return {
+    url: `${config.apiBaseUrl}${path.slice('/api'.length)}`,
+    token: config.apiToken
+  };
+}
+
+function createApiRequest(path, options = {}) {
+  const resolved = resolveApiUrl(path);
+  const headers = new Headers(options.headers || {});
+  headers.set('X-API-Token', resolved.token);
+
+  return {
+    url: resolved.url,
+    options: {
+      method: options.method || 'GET',
+      headers,
+      body: options.body,
+      redirect: 'error',
+      signal: options.signal
+    }
+  };
+}
+
+function getApiHost() {
+  const config = getApiConfig();
+  return {
+    success: true,
+    host: new URL(config.apiBaseUrl).host,
+    apiBaseUrl: config.apiBaseUrl
+  };
+}
+
 async function getActiveTab() {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return activeTab || null;
@@ -184,17 +254,9 @@ function getPlaylistListIdFromUrl(url) {
 }
 
 async function proxyApiFetch(request) {
-  const url = typeof request.url === 'string' ? request.url : '';
-  if (!url.startsWith('http://localhost:3001/api/')) {
-    throw new Error('Unsupported API proxy URL.');
-  }
-
   const options = request.options && typeof request.options === 'object' ? request.options : {};
-  const response = await fetch(url, {
-    method: options.method || 'GET',
-    headers: options.headers || undefined,
-    body: options.body
-  });
+  const apiRequest = createApiRequest(request.url, options);
+  const response = await fetch(apiRequest.url, apiRequest.options);
 
   const headers = {};
   response.headers.forEach((value, key) => {
@@ -210,6 +272,78 @@ async function proxyApiFetch(request) {
     body: await response.text()
   };
 }
+
+function postPortMessage(port, message) {
+  try {
+    port.postMessage(message);
+  } catch (error) {
+  }
+}
+
+function emitServerEvent(port, block) {
+  let eventName = 'message';
+  const data = [];
+
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) eventName = line.slice(6).trim();
+    if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+  }
+
+  if (data.length > 0) postPortMessage(port, { type: 'event', event: eventName, data: data.join('\n') });
+}
+
+async function streamApiEvents(path, port, signal) {
+  const apiRequest = createApiRequest(path, {
+    headers: { Accept: 'text/event-stream' },
+    signal
+  });
+  const response = await fetch(apiRequest.url, apiRequest.options);
+
+  if (!response.ok || !response.body) {
+    const body = await response.text();
+    throw new Error(body || `Event stream failed with status ${response.status}.`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (!signal.aborted) {
+    const result = await reader.read();
+    buffer += decoder.decode(result.value || new Uint8Array(), { stream: !result.done }).replace(/\r\n/g, '\n');
+
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      emitServerEvent(port, buffer.slice(0, boundary));
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf('\n\n');
+    }
+
+    if (result.done) break;
+  }
+}
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== 'api-events') return;
+
+  const controller = new AbortController();
+  let started = false;
+
+  port.onMessage.addListener(message => {
+    if (started || !message || message.action !== 'subscribeApiEvents') return;
+    started = true;
+
+    streamApiEvents(message.path, port, controller.signal)
+      .then(() => {
+        if (!controller.signal.aborted) postPortMessage(port, { type: 'error', error: 'Event stream closed.' });
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) postPortMessage(port, { type: 'error', error: error.message || 'Event stream failed.' });
+      });
+  });
+
+  port.onDisconnect.addListener(() => controller.abort());
+});
 
 async function openManagementPage() {
   await chrome.tabs.create({ url: chrome.runtime.getURL('management.html') });
@@ -563,6 +697,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
   } else if (request.action === 'apiFetch') {
     task = proxyApiFetch(request);
+  } else if (request.action === 'getApiHost') {
+    task = Promise.resolve(getApiHost());
   }
 
   if (!task) return false;

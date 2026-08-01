@@ -7,6 +7,10 @@ import transcriptsRouter from './transcripts';
 
 const router = Router();
 
+router.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 router.use(playlistsRouter);
 router.use(syncRouter);
 router.use(summariesRouter);
