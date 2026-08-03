@@ -5,6 +5,21 @@ const CACHE_TTL = 30000;
 
 const nativeFetch = typeof fetch === 'function' ? fetch.bind(globalThis) : null;
 
+function responseErrorMessage(body, fallbackMessage) {
+  const message = String(body || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return message ? message.slice(0, 300) : fallbackMessage;
+}
+
+function parseJsonBody(body, fallbackMessage) {
+  if (!body) return null;
+
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    throw new Error(responseErrorMessage(body, fallbackMessage));
+  }
+}
+
 function shouldProxyApiFetch() {
   return typeof chrome !== 'undefined' &&
     chrome.runtime &&
@@ -55,7 +70,7 @@ function createProxyResponse(payload) {
       return body;
     },
     async json() {
-      return body ? JSON.parse(body) : null;
+      return parseJsonBody(body, `API returned an invalid response (${payload.status || 0}).`);
     }
   };
 }
@@ -149,11 +164,9 @@ function cacheInvalidate(...patterns) {
 
 async function readJsonResponse(res, fallbackMessage) {
   const contentType = res.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) return res.json();
-
   const text = await res.text();
-  const message = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  throw new Error(message || fallbackMessage);
+  if (contentType.includes('application/json')) return parseJsonBody(text, fallbackMessage);
+  throw new Error(responseErrorMessage(text, fallbackMessage));
 }
 
 const api = {
@@ -259,7 +272,8 @@ const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videoId })
     });
-    const data = await res.json();
+    const data = await readJsonResponse(res, 'Failed to add video to playlist');
+    if (!res.ok) throw new Error(data.error || 'Failed to add video to playlist');
     cacheInvalidate('playlists', 'playlist_counts', 'generated_summaries', `playlist_videos_${playlistId}`, `playlist_missing_${playlistId}`, `playlist_youtube_cleanup_pending_${playlistId}`, `playlist_youtube_cleanup_candidates_${playlistId}`, `video_playlists_${videoId}`);
     return data;
   },

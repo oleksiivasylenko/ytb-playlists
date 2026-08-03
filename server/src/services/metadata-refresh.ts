@@ -102,9 +102,12 @@ export async function ensureFreshVideo(videoId: string) {
     await refreshVideoMetadata(videoId);
   } catch (error) {
     if (existing) return existing;
-    upsertVideo(videoId, toVideoMetadata(videoId), null);
   }
 
+  const refreshed = db.prepare('SELECT * FROM videos WHERE id = ?').get(videoId);
+  if (refreshed) return refreshed;
+
+  upsertVideo(videoId, toVideoMetadata(videoId), null);
   return db.prepare('SELECT * FROM videos WHERE id = ?').get(videoId);
 }
 

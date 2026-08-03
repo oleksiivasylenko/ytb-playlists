@@ -1,6 +1,7 @@
-import express from 'express';
+import express, { ErrorRequestHandler } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { ZodError } from 'zod';
 import { initDb } from './db';
 import routes from './routes';
 import { createApiSecurityMiddleware, loadApiSecurityOptions } from './middleware/api-security';
@@ -30,6 +31,24 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 initDb();
 
 app.use('/api', routes);
+
+const apiErrorHandler: ErrorRequestHandler = (error, req, res, next) => {
+  if (res.headersSent) {
+    next(error);
+    return;
+  }
+
+  console.error(`${req.method} ${req.originalUrl} failed:`, error);
+
+  if (error instanceof ZodError) {
+    res.status(400).json({ error: 'Invalid request', issues: error.issues });
+    return;
+  }
+
+  res.status(500).json({ error: 'Internal server error' });
+};
+
+app.use('/api', apiErrorHandler);
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);

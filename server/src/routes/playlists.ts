@@ -133,14 +133,23 @@ router.get('/playlists/:id/videos/youtube-cleanup-candidates', (req, res) => {
 });
 
 router.post('/playlists/:id/videos', async (req, res) => {
+  const playlistId = Number(req.params.id);
   const videoId = normalizeVideoId(req.body.videoId);
   const { addedAt } = req.body;
 
+  if (!Number.isInteger(playlistId) || playlistId <= 0) {
+    return res.status(400).json({ error: 'Valid playlist is required' });
+  }
   if (!videoId) return res.status(400).json({ error: 'Valid videoId is required' });
 
+  const playlist = db.prepare('SELECT id FROM playlists WHERE id = ?').get(playlistId);
+  if (!playlist) return res.status(404).json({ error: 'Playlist not found' });
+
   const video = await ensureFreshVideo(videoId);
+  if (!video) return res.status(502).json({ error: 'Failed to store video metadata' });
+
   const existing = db.prepare('SELECT status FROM playlist_videos WHERE playlist_id = ? AND video_id = ?')
-    .get(req.params.id, videoId) as any;
+    .get(playlistId, videoId) as any;
 
   if (existing && existing.status === 'active') {
     return res.status(400).json({ error: 'Video already in playlist' });
@@ -158,7 +167,7 @@ router.post('/playlists/:id/videos', async (req, res) => {
       youtube_cleanup_error = NULL,
       moved_to_playlist_id = NULL,
       moved_at = NULL
-  `).run(req.params.id, videoId, addedAt || null);
+  `).run(playlistId, videoId, addedAt || null);
 
   if (videoNeedsMetadataRefresh(video)) {
     refreshVideoMetadataInBackground([videoId]);
