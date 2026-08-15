@@ -440,9 +440,25 @@ const api = {
       });
     }
 
-    const url = `asset.html?type=summary&videoId=${encodeURIComponent(videoId)}&mode=${encodeURIComponent(normalizedMode)}`;
+    const url = `${window.location.origin}/api/public/summaries/${encodeURIComponent(videoId)}?mode=${encodeURIComponent(normalizedMode)}`;
     window.open(url, '_blank');
-    return { success: true };
+    return { success: true, url };
+  },
+  async getPublicSummaryUrl(videoId, mode = 'plain') {
+    const normalizedMode = mode === 'html' ? 'html' : 'plain';
+
+    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+      return sendRuntimeMessage({
+        action: 'getPublicSummaryUrl',
+        videoId,
+        mode: normalizedMode
+      });
+    }
+
+    return {
+      success: true,
+      url: `${window.location.origin}/api/public/summaries/${encodeURIComponent(videoId)}?mode=${encodeURIComponent(normalizedMode)}`
+    };
   },
   async getTagStatus(videoId, options = {}) {
     const key = `video_tag_status_${videoId}`;

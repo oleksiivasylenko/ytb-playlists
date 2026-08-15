@@ -70,7 +70,7 @@ ytb-playlists/
   database.sqlite             Local runtime database, ignored by git
 ```
 
-The server listens on port `3001` by default. Every `/api` route requires the shared `X-API-Token` header and is protected by per-IP adaptive rate limiting.
+The server listens on port `3001` by default. Private `/api` routes require the shared `X-API-Token` header and are protected by per-IP adaptive rate limiting. Read-only summary pages under `/api/public` are intentionally accessible without the token.
 
 ## Server Setup
 
@@ -133,14 +133,14 @@ The Compose configuration stores SQLite data in a named volume and publishes the
 ## Extension Setup
 
 1. Copy `extension/config.example.js` to `extension/config.local.js`.
-2. Set `apiBaseUrl` and use the same `apiToken` value as `API_TOKEN` in `server/.env`.
+2. Set `apiBaseUrl` and use the same `apiToken` value as `API_TOKEN` in `server/.env`. Set `publicBaseUrl` only when public pages use a custom base path.
 3. Open `chrome://extensions`.
 4. Enable `Developer mode`.
 5. Click `Load unpacked`.
 6. Select the `extension` directory.
 7. Open YouTube and use the popup, docked panel, or manager.
 
-For a remote server, set `apiBaseUrl` to an HTTPS URL ending in `/api`, for example `https://playlists.example.com/api`. Reload the extension after changing `config.local.js`.
+For a remote server, set `apiBaseUrl` to an HTTPS URL ending in `/api`, for example `https://playlists.example.com/api`. `publicBaseUrl` defaults to `${apiBaseUrl}/public`; set it explicitly only when public pages use another base path. Summary pages then open at public HTTPS URLs such as `https://playlists.example.com/api/public/summaries/VIDEO_ID?mode=html`. Reload the extension after changing `config.local.js`.
 
 ## Typical Workflow
 

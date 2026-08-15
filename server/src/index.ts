@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { ZodError } from 'zod';
 import { initDb } from './db';
 import routes from './routes';
+import publicRouter from './routes/public';
 import { createApiSecurityMiddleware, loadApiSecurityOptions } from './middleware/api-security';
 
 dotenv.config();
@@ -24,6 +25,7 @@ function trustProxySetting(value: string | undefined) {
 
 app.set('trust proxy', trustProxySetting(process.env.TRUST_PROXY));
 app.use(cors({ allowedHeaders: ['Content-Type', 'X-API-Token'] }));
+app.use('/api/public', publicRouter);
 app.use('/api', createApiSecurityMiddleware(loadApiSecurityOptions(API_TOKEN)));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

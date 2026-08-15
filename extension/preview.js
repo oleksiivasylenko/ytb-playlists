@@ -154,9 +154,13 @@
         }
       };
 
-      externalBtn.onclick = event => {
+      externalBtn.onclick = async event => {
         event.stopPropagation();
-        openExternalPage(config);
+        try {
+          await openExternalPage(config);
+        } catch (error) {
+          setText(config.title, error.message || 'Failed to open page.', 'error');
+        }
       };
 
       copyBtn.onclick = async event => {
@@ -292,6 +296,11 @@
     }
 
     async function openExternalPage(config) {
+      if (config.openExternal) {
+        await config.openExternal();
+        return;
+      }
+
       if (config.externalUrl) {
         window.open(config.externalUrl, '_blank');
         return;
@@ -340,7 +349,8 @@
 
     return {
       title,
-      externalUrl: buildAssetPageUrl(options.videoId, type, mode),
+      externalUrl: isTranscript ? buildAssetPageUrl(options.videoId, type, mode) : '',
+      openExternal: isTranscript ? null : () => window.api.openSummaryPage(options.videoId, mode),
       ready: options.ready,
       emptyText: options.emptyText || (isTranscript ? 'Transcript has not been fetched yet.' : 'Summary has not been generated yet.'),
       emptyState: options.emptyState,
@@ -366,6 +376,7 @@
 
   function buildAssetPageUrl(videoId, type, mode) {
     if (!videoId || !window.chrome || !chrome.runtime || !chrome.runtime.getURL) return '';
+    if (type === 'summary') return '';
     const params = new URLSearchParams({ videoId, type });
     if (type === 'summary') params.set('mode', mode);
     return chrome.runtime.getURL(`asset.html?${params.toString()}`);

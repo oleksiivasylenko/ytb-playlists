@@ -1415,13 +1415,8 @@
   }
 
   async function openSummaryPage(video, active) {
-    if (window.api.openSummaryPage) {
-      await window.api.openSummaryPage(video.id, summaryMode, { active });
-      return;
-    }
-
-    const url = chrome.runtime.getURL(`asset.html?type=summary&videoId=${encodeURIComponent(video.id)}&mode=${encodeURIComponent(summaryMode)}`);
-    window.open(url, '_blank');
+    if (!window.api.openSummaryPage) throw new Error('Public summary pages are unavailable.');
+    await window.api.openSummaryPage(video.id, summaryMode, { active });
   }
 
   async function openSummaryPageWithStatus(video, active) {

@@ -1558,13 +1558,8 @@
   }
 
   async function openSummaryPage(videoId, mode, active) {
-    if (window.api.openSummaryPage) {
-      await window.api.openSummaryPage(videoId, mode, { active });
-      return;
-    }
-
-    const url = chrome.runtime.getURL(`asset.html?type=summary&videoId=${encodeURIComponent(videoId)}&mode=${encodeURIComponent(mode)}`);
-    window.open(url, '_blank');
+    if (!window.api.openSummaryPage) throw new Error('Public summary pages are unavailable.');
+    await window.api.openSummaryPage(videoId, mode, { active });
   }
 
   function ensureQuickSaveInitialized() {

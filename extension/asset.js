@@ -135,6 +135,17 @@
       }
     }
 
+    if (type === 'summary' && window.api.getPublicSummaryUrl) {
+      try {
+        const result = await window.api.getPublicSummaryUrl(videoId, mode);
+        if (result && result.url) {
+          window.location.replace(result.url);
+          return;
+        }
+      } catch {
+      }
+    }
+
     setHeader('');
     await Promise.all([loadMetadata(), loadAsset()]);
   }

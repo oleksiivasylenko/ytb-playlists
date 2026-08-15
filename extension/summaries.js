@@ -230,9 +230,12 @@
     };
   }
 
-  function openSummary(video, mode = getPrimarySummaryMode(video)) {
-    const url = chrome.runtime.getURL(`asset.html?type=summary&videoId=${encodeURIComponent(video.id)}&mode=${encodeURIComponent(mode)}`);
-    window.open(url, '_blank');
+  async function openSummary(video, mode = getPrimarySummaryMode(video)) {
+    try {
+      await window.api.openSummaryPage(video.id, mode);
+    } catch (error) {
+      setStatus(error.message || 'Failed to open public summary.', 'error');
+    }
   }
 
   function openYoutube(video) {

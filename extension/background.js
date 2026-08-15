@@ -27,7 +27,23 @@ function getApiConfig() {
     throw new Error('The extension apiBaseUrl must end with /api.');
   }
 
-  return { apiBaseUrl, apiToken };
+  const publicBaseUrl = String(config.publicBaseUrl || `${apiBaseUrl}/public`).trim().replace(/\/+$/, '');
+  let parsedPublicUrl;
+  try {
+    parsedPublicUrl = new URL(publicBaseUrl);
+  } catch (error) {
+    throw new Error('The extension publicBaseUrl is invalid.');
+  }
+
+  const publicLocalHost = parsedPublicUrl.hostname === 'localhost' || parsedPublicUrl.hostname === '127.0.0.1' || parsedPublicUrl.hostname === '[::1]';
+  if (parsedPublicUrl.protocol !== 'https:' && !(parsedPublicUrl.protocol === 'http:' && publicLocalHost)) {
+    throw new Error('The remote publicBaseUrl must use HTTPS.');
+  }
+  if (parsedPublicUrl.search || parsedPublicUrl.hash) {
+    throw new Error('The extension publicBaseUrl cannot contain a query or hash.');
+  }
+
+  return { apiBaseUrl, apiToken, publicBaseUrl };
 }
 
 function resolveApiUrl(path) {
@@ -64,8 +80,16 @@ function getApiHost() {
   return {
     success: true,
     host: new URL(config.apiBaseUrl).host,
-    apiBaseUrl: config.apiBaseUrl
+    apiBaseUrl: config.apiBaseUrl,
+    publicBaseUrl: config.publicBaseUrl
   };
+}
+
+function getPublicSummaryUrl(videoId, mode) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) throw new Error('Missing video id.');
+  const normalizedMode = mode === 'html' ? 'html' : 'plain';
+  const { publicBaseUrl } = getApiConfig();
+  return `${publicBaseUrl}/summaries/${encodeURIComponent(videoId)}?mode=${encodeURIComponent(normalizedMode)}`;
 }
 
 async function getActiveTab() {
@@ -551,9 +575,9 @@ function isSummaryPageUrl(url, videoId, mode) {
   if (!url) return false;
   try {
     const parsed = new URL(url);
-    return parsed.href.startsWith(chrome.runtime.getURL('asset.html')) &&
-      parsed.searchParams.get('type') === 'summary' &&
-      parsed.searchParams.get('videoId') === videoId &&
+    const expected = new URL(getPublicSummaryUrl(videoId, mode));
+    return parsed.origin === expected.origin &&
+      parsed.pathname === expected.pathname &&
       (parsed.searchParams.get('mode') || 'plain') === mode;
   } catch (err) {
     return false;
@@ -592,7 +616,7 @@ async function openSummaryPage(videoId, options = {}) {
 
   const mode = options.mode === 'html' ? 'html' : 'plain';
   const key = getSummaryPageKey(videoId, mode);
-  const url = chrome.runtime.getURL(`asset.html?type=summary&videoId=${encodeURIComponent(videoId)}&mode=${encodeURIComponent(mode)}`);
+  const url = getPublicSummaryUrl(videoId, mode);
 
   const storedTabs = await getStoredSummaryPageTabs();
   const storedTabId = storedTabs[key];
@@ -601,7 +625,7 @@ async function openSummaryPage(videoId, options = {}) {
       const storedTab = await chrome.tabs.get(storedTabId);
       if (storedTab && storedTab.id && isSummaryPageUrl(storedTab.url, videoId, mode)) {
         await activateTab(storedTab);
-        return { success: true, existing: true };
+        return { success: true, existing: true, url };
       }
       await removeStoredSummaryPageTab(key);
     } catch (err) {
@@ -615,12 +639,12 @@ async function openSummaryPage(videoId, options = {}) {
   if (existing && existing.id) {
     await setStoredSummaryPageTab(key, existing.id);
     await activateTab(existing);
-    return { success: true, existing: true };
+    return { success: true, existing: true, url };
   }
 
   const tab = await chrome.tabs.create({ url, active: options.active !== false });
   if (tab.id) await setStoredSummaryPageTab(key, tab.id);
-  return { success: true };
+  return { success: true, url };
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -695,6 +719,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       mode: request.mode,
       active: request.active !== false
     });
+  } else if (request.action === 'getPublicSummaryUrl') {
+    task = Promise.resolve({ success: true, url: getPublicSummaryUrl(request.videoId, request.mode) });
   } else if (request.action === 'apiFetch') {
     task = proxyApiFetch(request);
   } else if (request.action === 'getApiHost') {
