@@ -1557,11 +1557,6 @@
     }
   }
 
-  async function openSummaryPage(videoId, mode, active) {
-    if (!window.api.openSummaryPage) throw new Error('Public summary pages are unavailable.');
-    await window.api.openSummaryPage(videoId, mode, { active });
-  }
-
   function ensureQuickSaveInitialized() {
     if (!quickSaveInitPromise) {
       quickSaveInitPromise = initQuickSave().catch(error => {
@@ -1625,6 +1620,7 @@
 
       summaryBtns.forEach(summaryBtn => {
         const action = summaryBtn.dataset.ytbSummaryAction || 'generate';
+        summaryBtn.dataset.ytbSummaryMode = summaryMode;
         setYtbActionButtonState(summaryBtn, hasSummary, summaryBusy, summaryBlocked || summaryBusy, summaryBtn.dataset.ytbLabel || '');
         if (!summaryBusy) {
           if (summaryBtn.dataset.ytbIcon === 'external-link') summaryBtn.innerHTML = externalLinkIcon;
@@ -1727,6 +1723,20 @@
     const videoId = getVideoIdFromUrl();
     if (!videoId || watchSummaryLoads.has(videoId) || button.disabled || button.classList.contains('ytb-action-btn--busy')) return;
 
+    const shouldOpen = action === 'open-active' || action === 'open-background';
+    if (shouldOpen) {
+      try {
+        await window.api.generateAndOpenSummaryPage(videoId, button.dataset.ytbSummaryMode, {
+          active: action === 'open-active'
+        });
+      } catch (error) {
+        logContentError('YTB summary page action failed', error);
+        button.textContent = '!';
+        setTimeout(updateYtbActionButtonsState, 1200);
+      }
+      return;
+    }
+
     watchSummaryLoads.add(videoId);
     setYtbActionButtonState(button, button.classList.contains('ytb-action-btn--ready'), true, false, 'S');
 
@@ -1740,14 +1750,11 @@
       }
       const status = await window.api.getSummaryStatus(videoId, { force: true });
       const hasSummary = summaryMode === 'html' ? status.hasHtmlSummary : status.hasSummary;
-      const shouldOpen = action === 'open-active' || action === 'open-background';
       if (hasSummary) {
-        if (shouldOpen) await openSummaryPage(videoId, summaryMode, action === 'open-active');
         await updateYtbActionButtonsState();
         return;
       }
       await window.api.requestSummary(videoId, summaryMode);
-      if (shouldOpen) await openSummaryPage(videoId, summaryMode, action === 'open-active');
       await updateYtbActionButtonsState();
       if (panelApi && panelApi.isOpen()) panelApi.loadVideos();
     } catch (error) {
@@ -2051,7 +2058,18 @@
           quickSavePlaylistId = p.id;
           safeStorageSet({ quickSavePlaylistId });
           closeDropdown();
-          await updateQuickSaveButtonState(saveBtn, saveLabel);
+          const videoId = getVideoIdFromUrl();
+          if (!videoId) return;
+
+          try {
+            const videoPlaylists = await window.api.getVideoPlaylists(videoId);
+            const isAlreadySaved = videoPlaylists.some(playlist => String(playlist.id) === String(p.id));
+            if (!isAlreadySaved) await window.api.addVideoToPlaylist(p.id, videoId);
+            await updateQuickSaveButtonState(saveBtn, saveLabel);
+            if (panelApi && panelApi.isOpen()) panelApi.loadPlaylists(true);
+          } catch (err) {
+            logContentError('Quick-save error:', err);
+          }
         });
         dropdown.appendChild(item);
       });

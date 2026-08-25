@@ -647,6 +647,21 @@ async function openSummaryPage(videoId, options = {}) {
   return { success: true, url };
 }
 
+async function generateAndOpenSummaryPage(videoId, options = {}) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) throw new Error('Missing video id.');
+
+  const params = new URLSearchParams({
+    videoId,
+    type: 'summary',
+    generate: 'true'
+  });
+  if (options.mode === 'plain' || options.mode === 'html') params.set('mode', options.mode);
+
+  const url = chrome.runtime.getURL(`asset.html?${params.toString()}`);
+  const tab = await chrome.tabs.create({ url, active: options.active !== false });
+  return { success: true, tabId: tab.id, url };
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   await clearDockedPanelRuntimeState();
   await configureOpenTabsSidePanels();
@@ -716,6 +731,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     task = openYoutubeVideo(request.videoId, { newTab: !!request.newTab });
   } else if (request.action === 'openSummaryPage') {
     task = openSummaryPage(request.videoId, {
+      mode: request.mode,
+      active: request.active !== false
+    });
+  } else if (request.action === 'generateAndOpenSummaryPage') {
+    task = generateAndOpenSummaryPage(request.videoId, {
       mode: request.mode,
       active: request.active !== false
     });

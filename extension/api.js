@@ -444,6 +444,24 @@ const api = {
     window.open(url, '_blank');
     return { success: true, url };
   },
+  async generateAndOpenSummaryPage(videoId, mode, options = {}) {
+    const normalizedMode = mode === 'html' ? 'html' : mode === 'plain' ? 'plain' : '';
+    const active = options.active !== false;
+
+    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+      return sendRuntimeMessage({
+        action: 'generateAndOpenSummaryPage',
+        videoId,
+        mode: normalizedMode,
+        active
+      });
+    }
+
+    const settings = normalizedMode ? null : await api.getSummarySettings();
+    const resolvedMode = normalizedMode || settings.summary_mode || settings.summaryMode || 'plain';
+    await api.requestSummary(videoId, resolvedMode);
+    return api.openSummaryPage(videoId, resolvedMode, { active });
+  },
   async getPublicSummaryUrl(videoId, mode = 'plain') {
     const normalizedMode = mode === 'html' ? 'html' : 'plain';
 

@@ -136,6 +136,20 @@
     }
 
     if (type === 'summary' && window.api.getPublicSummaryUrl) {
+      if (params.get('generate') === 'true') {
+        setHeader('');
+        setBusy(true);
+        setStatus('Generating summary...');
+        loadMetadata();
+        try {
+          await window.api.requestSummary(videoId, mode);
+        } catch (error) {
+          setStatus(error.message || 'Failed to generate summary.', 'error');
+          setBusy(false);
+          return;
+        }
+      }
+
       try {
         const result = await window.api.getPublicSummaryUrl(videoId, mode);
         if (result && result.url) {
