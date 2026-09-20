@@ -1,3 +1,5 @@
+importScripts('comments-page.js');
+
 try {
   importScripts('config.local.js');
 } catch (error) {
@@ -706,10 +708,36 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
     .catch(() => {});
 });
 
+async function fetchCommentsForTab(request, sender) {
+  if (!isYoutubeTab(sender.tab) || sender.frameId !== 0 || !/^[a-zA-Z0-9_-]{11}$/.test(request.videoId || '')) {
+    throw new Error('Comment sync must run on the current YouTube video page.');
+  }
+  if (!['page', 'stop'].includes(request.operation) || typeof request.runId !== 'string' || request.runId.length > 100) {
+    throw new Error('Invalid comment sync request.');
+  }
+  if (request.continuation != null && (typeof request.continuation !== 'string' || request.continuation.length > 50000)) {
+    throw new Error('Invalid comments continuation.');
+  }
+  const target = sender.documentId
+    ? { tabId: sender.tab.id, documentIds: [sender.documentId] }
+    : { tabId: sender.tab.id, frameIds: [0] };
+  const results = await chrome.scripting.executeScript({
+    target,
+    world: 'MAIN',
+    func: fetchYoutubeCommentsPage,
+    args: [{ operation: request.operation, videoId: request.videoId, runId: request.runId, continuation: request.continuation, phase: request.phase, reply: !!request.reply }]
+  });
+  const result = results[0]?.result;
+  if (!result) throw new Error('YouTube did not respond to comment sync. Reload this tab and try again.');
+  return result;
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   let task = null;
 
-  if (request.action === 'openManagementPage') {
+  if (request.action === 'fetchYoutubeComments') {
+    task = fetchCommentsForTab(request, sender);
+  } else if (request.action === 'openManagementPage') {
     task = openManagementPage();
   } else if (request.action === 'activateFloatingPanel') {
     task = activateFloatingPanel();

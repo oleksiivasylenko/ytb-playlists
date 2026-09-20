@@ -31,10 +31,6 @@
   const SYNC_MAX_DURATION_MS = 20 * 60 * 1000;
   const SYNC_IDLE_TIMEOUT_MS = 75 * 1000;
   const SYNC_MISMATCH_IDLE_ROUNDS = 10;
-  const COMMENTS_SYNC_MAX_DURATION_MS = 3 * 60 * 1000;
-  const COMMENTS_SYNC_IDLE_TIMEOUT_MS = 18 * 1000;
-  const COMMENTS_SYNC_PROGRESS_WAIT_MS = 10000;
-  const COMMENTS_SYNC_PROGRESS_POLL_MS = 500;
 
   const {
     extractVideoIdFromUrl,
@@ -56,20 +52,17 @@
     getVisibleMenuButton,
     getVisibleMenuItems,
     isRemoveMenuText,
-    parseCompactCount,
-    getExpectedCommentCount,
-    collectLoadedComments,
-    findCommentsSection,
-    hasActiveCommentsContinuationLoader,
-    getHiddenReplyCount,
-    getLoadedCommentCount,
     getCommentSyncStats,
-    formatCommentsCount,
     getCurrentVideoTitleFromPage,
     getCurrentVideoAuthorFromPage,
     getVideoIdFromUrl,
     truncate
   } = window.ytbContentDom;
+
+  const commentsSync = window.ytbCommentsSync.create({
+    request: request => chrome.runtime.sendMessage({ action: 'fetchYoutubeComments', ...request }),
+    getVideoId: getVideoIdFromUrl
+  });
 
   function isExtensionContextError(error) {
     const message = String(error && (error.message || error) || '');
@@ -897,78 +890,12 @@
       });
   }
 
-  function createCommentsSyncStopError(message, options = {}) {
-    const error = new Error(message || 'Comment sync stopped.');
-    error.isCommentsSyncStop = true;
-    error.silent = !!options.silent;
-    return error;
-  }
-
-  function startCommentsSyncContext(videoId) {
-    const now = Date.now();
-    const context = {
-      videoId,
-      cancelled: false,
-      cancelMessage: '',
-      silentStop: false,
-      startedAt: now,
-      deadlineAt: now + COMMENTS_SYNC_MAX_DURATION_MS,
-      lastProgressAt: now
-    };
-    activeCommentsSync = context;
-    return context;
-  }
-
   function stopActiveCommentsSync(message = 'Comment sync stopped.', options = {}) {
-    removeCommentsSyncFloatingStop();
-    if (!activeCommentsSync || activeCommentsSync.cancelled) return false;
-    activeCommentsSync.cancelled = true;
+    if (!activeCommentsSync || activeCommentsSync.controller.signal.aborted) return false;
     activeCommentsSync.cancelMessage = message;
     activeCommentsSync.silentStop = !!options.silent;
+    activeCommentsSync.controller.abort();
     return true;
-  }
-
-  function assertCommentsSyncCanContinue(context) {
-    if (!context || activeCommentsSync !== context) {
-      throw createCommentsSyncStopError('Comment sync stopped.');
-    }
-
-    if (context.cancelled) {
-      throw createCommentsSyncStopError(context.cancelMessage || 'Comment sync stopped.', {
-        silent: context.silentStop
-      });
-    }
-
-    const videoId = getVideoIdFromUrl();
-    if (!videoId || videoId !== context.videoId) {
-      throw createCommentsSyncStopError('Comment sync stopped because this tab opened a different video.');
-    }
-
-    const now = Date.now();
-    if (now > context.deadlineAt) {
-      throw createCommentsSyncStopError('Comment sync timed out after 3 minutes.');
-    }
-
-    if (now - context.lastProgressAt > COMMENTS_SYNC_IDLE_TIMEOUT_MS) {
-      throw createCommentsSyncStopError('Comment sync stopped because YouTube did not load more comments.');
-    }
-  }
-
-  function markCommentsSyncProgress(context) {
-    if (context) context.lastProgressAt = Date.now();
-  }
-
-  function scrollTowardComments(context) {
-    assertCommentsSyncCanContinue(context);
-    const commentsSection = findCommentsSection();
-    if (commentsSection && getLoadedCommentCount() === 0) {
-      const sectionTop = commentsSection.getBoundingClientRect().top + window.scrollY;
-      const targetTop = Math.min(sectionTop + Math.floor(window.innerHeight * 0.65), getScrollMetrics().scrollHeight);
-      scrollToPosition(targetTop);
-      return;
-    }
-
-    scrollDownForSync(context);
   }
 
   function getAskPanel() {
@@ -1134,41 +1061,16 @@
   }
 
   function updateAskCommentStats(panel) {
-    const stats = getCommentSyncStats();
+    const stats = commentsSync.getStats(getCommentSyncStats);
     const counter = panel && panel.querySelector('.ytb-ask-comments-count');
-    if (counter) counter.textContent = formatCommentsCount(stats.comments.length, stats.expected, stats.hiddenReplies);
-    return stats;
-  }
-
-  function isCommentsSyncComplete(stats) {
-    return stats.expected === 0 || (Number.isInteger(stats.expected) && stats.accounted >= stats.expected);
-  }
-
-  function hasCommentsSyncProgress(stats, previous) {
-    return stats.comments.length > previous.comments ||
-      stats.hiddenReplies > previous.hiddenReplies ||
-      stats.accounted > previous.accounted;
-  }
-
-  async function waitForCommentsSyncProgress(context, panel, previous) {
-    const startedAt = Date.now();
-    let stats = updateAskCommentStats(panel);
-    let loaderSeen = hasActiveCommentsContinuationLoader();
-
-    while (Date.now() - startedAt < COMMENTS_SYNC_PROGRESS_WAIT_MS) {
-      await delay(COMMENTS_SYNC_PROGRESS_POLL_MS);
-      assertCommentsSyncCanContinue(context);
-      scrollTowardComments(context);
-
-      stats = updateAskCommentStats(panel);
-      if (isCommentsSyncComplete(stats) || hasCommentsSyncProgress(stats, previous)) {
-        return { stats, progressed: true };
-      }
-
-      if (hasActiveCommentsContinuationLoader()) loaderSeen = true;
+    if (counter) {
+      const count = stats.comments.length.toLocaleString();
+      const expected = Number.isInteger(stats.expected) ? ' / ' + stats.expected.toLocaleString() : '';
+      const label = count + expected + ' comments';
+      if (counter.textContent !== label) counter.textContent = label;
+      counter.title = 'Downloaded comment texts, including replies';
     }
-
-    return { stats, progressed: loaderSeen };
+    return stats;
   }
 
   async function updateAskTranscriptToggleState(panel) {
@@ -1191,107 +1093,58 @@
     if (!button) return;
     button.textContent = running ? 'Stop sync' : 'Sync comments';
     button.classList.toggle('ytb-ask-sync-btn--stop', !!running);
-  }
-
-  function showCommentsSyncFloatingStop(panel) {
-    removeCommentsSyncFloatingStop();
-
-    const button = document.createElement('button');
-    button.id = 'ytb-ask-sync-floating-stop';
-    button.type = 'button';
-    button.textContent = 'Stop comments sync';
-    button.addEventListener('click', event => {
-      event.stopPropagation();
-      stopActiveCommentsSync('Comment sync stopped by user.');
-      setAskStatus(panel, 'Stopping comment sync...', 'busy');
-      returnToAskPanelTop(panel);
-    });
-    document.body.appendChild(button);
-  }
-
-  function removeCommentsSyncFloatingStop() {
-    document.getElementById('ytb-ask-sync-floating-stop')?.remove();
-  }
-
-  function returnToAskPanelTop(panel) {
-    if (panel && panel.isConnected) {
-      const top = panel.getBoundingClientRect().top + window.scrollY - 80;
-      scrollToPosition(Math.max(0, top));
-      return;
-    }
-
-    scrollToPosition(0);
+    button.setAttribute('aria-pressed', String(!!running));
+    button.title = running ? 'Stop downloading comments' : 'Download all available comments and replies';
+    const progress = panel.querySelector('.ytb-ask-sync-progress');
+    if (progress) progress.setAttribute('aria-busy', String(!!running));
+    const spinner = panel.querySelector('.ytb-ask-sync-spinner');
+    if (spinner) spinner.hidden = !running;
   }
 
   async function performCommentsSync(panel) {
     const videoId = getVideoIdFromUrl();
     if (!videoId || activeCommentsSync) return;
 
-    const context = startCommentsSyncContext(videoId);
+    const context = { videoId, runId: crypto.randomUUID(), controller: new AbortController(), silentStop: false };
+    activeCommentsSync = context;
     setCommentsSyncButtonState(panel, true);
-    showCommentsSyncFloatingStop(panel);
-    setAskStatus(panel, 'Syncing comments...', 'busy');
+    setAskStatus(panel, 'Loading comments and replies...', 'busy');
 
     try {
-      let stats = updateAskCommentStats(panel);
-      let previous = {
-        comments: stats.comments.length,
-        hiddenReplies: stats.hiddenReplies,
-        accounted: stats.accounted
-      };
-
-      for (let round = 0; round < 240; round++) {
-        assertCommentsSyncCanContinue(context);
-        stats = updateAskCommentStats(panel);
-
-        if (isCommentsSyncComplete(stats)) {
-          setAskStatus(panel, `Comments sync ready. ${formatCommentsCount(stats.comments.length, stats.expected, stats.hiddenReplies)}.`, 'success');
-          return;
+      await commentsSync.start({
+        ...context,
+        signal: context.controller.signal,
+        onProgress: () => {
+          if (panel.isConnected && getVideoIdFromUrl() === videoId) updateAskCommentStats(panel);
         }
-
-        setAskStatus(panel, `${formatCommentsCount(stats.comments.length, stats.expected, stats.hiddenReplies)}. Loading more...`, 'busy');
-        scrollTowardComments(context);
-        const waitResult = await waitForCommentsSyncProgress(context, panel, previous);
-        stats = waitResult.stats;
-
-        if (waitResult.progressed) {
-          markCommentsSyncProgress(context);
-          previous = {
-            comments: stats.comments.length,
-            hiddenReplies: stats.hiddenReplies,
-            accounted: stats.accounted
-          };
-          continue;
-        }
-
-        setAskStatus(panel, `Comments sync ready. ${formatCommentsCount(stats.comments.length, stats.expected, stats.hiddenReplies)}.`, 'success');
-        return;
+      });
+      if (!context.controller.signal.aborted && panel.isConnected && getVideoIdFromUrl() === videoId) {
+        const stats = updateAskCommentStats(panel);
+        const count = stats.comments.length.toLocaleString();
+        const message = stats.unavailable && !stats.comments.length
+          ? 'Comments are unavailable for this video.'
+          : 'Finished. Loaded ' + count + ' comments and replies available from YouTube.';
+        setAskStatus(panel, message, 'success');
       }
-
-      const finalStats = updateAskCommentStats(panel);
-      setAskStatus(panel, `Comments sync stopped. ${formatCommentsCount(finalStats.comments.length, finalStats.expected, finalStats.hiddenReplies)}.`, 'success');
     } catch (error) {
-      if (error.isCommentsSyncStop) {
-        if (!error.silent) setAskStatus(panel, error.message || 'Comment sync stopped.', 'success');
-        return;
+      if (panel.isConnected && getVideoIdFromUrl() === videoId && !context.silentStop) {
+        setAskStatus(panel, context.controller.signal.aborted
+          ? context.cancelMessage || 'Comment sync stopped. Downloaded comments are ready to use.'
+          : error.message || 'Comment sync failed.', context.controller.signal.aborted ? '' : 'error');
       }
-
-      setAskStatus(panel, error.message || 'Comment sync failed.', 'error');
-      logContentError('Ask panel: comment sync failed', error);
+      if (error.name !== 'AbortError') logContentError('Ask panel: comment sync failed', error);
     } finally {
       if (activeCommentsSync === context) activeCommentsSync = null;
-      removeCommentsSyncFloatingStop();
-      setCommentsSyncButtonState(panel, false);
-      updateAskCommentStats(panel);
-      returnToAskPanelTop(panel);
+      if (panel.isConnected && getVideoIdFromUrl() === videoId) {
+        setCommentsSyncButtonState(panel, false);
+        updateAskCommentStats(panel);
+      }
     }
   }
 
   function handleSyncCommentsClick(panel) {
     if (activeCommentsSync) {
-      stopActiveCommentsSync('Comment sync stopped by user.');
-      setAskStatus(panel, 'Stopping comment sync...', 'busy');
-      returnToAskPanelTop(panel);
+      stopActiveCommentsSync('Comment sync stopped. Downloaded comments are ready to use.');
       return;
     }
 
@@ -1420,6 +1273,17 @@
 
     const counter = document.createElement('span');
     counter.className = 'ytb-ask-comments-count';
+    counter.setAttribute('role', 'status');
+    counter.setAttribute('aria-live', 'polite');
+
+    const syncProgress = document.createElement('div');
+    syncProgress.className = 'ytb-ask-sync-progress';
+    syncProgress.setAttribute('aria-busy', 'false');
+
+    const spinner = document.createElement('span');
+    spinner.className = 'ytb-action-spinner ytb-ask-sync-spinner';
+    spinner.hidden = true;
+    spinner.setAttribute('aria-hidden', 'true');
 
     const syncButton = document.createElement('button');
     syncButton.type = 'button';
@@ -1440,9 +1304,11 @@
     });
 
     controls.appendChild(modeSwitch);
-    controls.appendChild(counter);
+    syncProgress.appendChild(counter);
+    syncProgress.appendChild(spinner);
+    syncProgress.appendChild(syncButton);
     controls.appendChild(askButton);
-    controls.appendChild(syncButton);
+    controls.appendChild(syncProgress);
 
     const status = document.createElement('div');
     status.className = 'ytb-ask-status';
@@ -2285,6 +2151,7 @@
       if (existingActions) existingActions.remove();
       document.getElementById('ytb-ask-panel')?.remove();
       stopActiveCommentsSync('Comment sync stopped because this tab opened a different video.', { silent: true });
+      commentsSync.clear();
       hideYtbPreview();
 
       if (!panelApi) return;

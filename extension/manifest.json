@@ -36,6 +36,7 @@
         "panel-utils.js",
         "panel-ui.js",
         "content-dom.js",
+        "comments-sync.js",
         "content.js"
       ]
     }

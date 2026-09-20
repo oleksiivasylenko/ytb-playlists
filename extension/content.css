@@ -1895,8 +1895,20 @@ ytd-app[dark] .yt-qs-dropdown-item--active {
   background: #0556bf;
 }
 
-.ytb-ask-sync-btn {
+.ytb-ask-sync-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
+}
+
+.ytb-ask-sync-spinner {
+  flex-shrink: 0;
+  color: #065fd4;
+}
+
+.ytb-ask-sync-spinner[hidden] {
+  display: none;
 }
 
 .ytb-ask-sync-btn--stop {
@@ -1904,26 +1916,6 @@ ytd-app[dark] .yt-qs-dropdown-item--active {
 }
 
 .ytb-ask-sync-btn--stop:hover {
-  background: #a61f1f;
-}
-
-#ytb-ask-sync-floating-stop {
-  position: fixed;
-  right: 22px;
-  bottom: 86px;
-  z-index: 10000000;
-  min-height: 38px;
-  border: 0;
-  border-radius: 19px;
-  background: #c62828;
-  color: #fff;
-  padding: 0 16px;
-  font: 800 13px/38px "Roboto", "Arial", sans-serif;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
-  cursor: pointer;
-}
-
-#ytb-ask-sync-floating-stop:hover {
   background: #a61f1f;
 }
 
