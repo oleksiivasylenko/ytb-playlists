@@ -37,6 +37,7 @@
         "panel-ui.js",
         "content-dom.js",
         "comments-sync.js",
+        "playlist-sync.js",
         "content.js"
       ]
     }

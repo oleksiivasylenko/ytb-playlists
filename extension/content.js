@@ -30,7 +30,6 @@
   const YOUTUBE_CLEANUP_REVIEW_PROMPT_KEY = 'youtubeCleanupReviewPrompt';
   const SYNC_MAX_DURATION_MS = 20 * 60 * 1000;
   const SYNC_IDLE_TIMEOUT_MS = 75 * 1000;
-  const SYNC_MISMATCH_IDLE_ROUNDS = 10;
 
   const {
     extractVideoIdFromUrl,
@@ -44,14 +43,7 @@
     getPlaylistEntryAuthor,
     getCurrentPlaylistPageSourceId,
     getYoutubePlaylistSource,
-    getExpectedPlaylistVideoCount,
-    getScrollMetrics,
-    scrollToPosition,
-    collectLoadedPlaylistEntries,
     collectLoadedPlaylistVideos,
-    getVisibleMenuButton,
-    getVisibleMenuItems,
-    isRemoveMenuText,
     getCommentSyncStats,
     getCurrentVideoTitleFromPage,
     getCurrentVideoAuthorFromPage,
@@ -62,6 +54,11 @@
   const commentsSync = window.ytbCommentsSync.create({
     request: request => chrome.runtime.sendMessage({ action: 'fetchYoutubeComments', ...request }),
     getVideoId: getVideoIdFromUrl
+  });
+
+  const playlistSync = window.ytbPlaylistSync.create({
+    request: request => chrome.runtime.sendMessage({ action: 'fetchYoutubePlaylist', ...request }),
+    getPlaylistId: getCurrentPlaylistPageSourceId
   });
 
   function isExtensionContextError(error) {
@@ -116,6 +113,7 @@
       panelApi = null;
     }
 
+    stopActivePlaylistSync('Playlist sync stopped.');
     stopActiveCommentsSync('Comment sync stopped.', { silent: true });
     ytbPreview.destroy();
     document.getElementById('yt-playlist-alt-toggle')?.remove();
@@ -230,10 +228,9 @@
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  function createSyncStopError(message, options = {}) {
+  function createSyncStopError(message) {
     const error = new Error(message || 'Sync stopped.');
     error.isSyncStop = true;
-    error.shouldFailRun = options.shouldFailRun !== false;
     return error;
   }
 
@@ -242,6 +239,8 @@
     const context = {
       cancelled: false,
       cancelMessage: '',
+      controller: new AbortController(),
+      requestId: crypto.randomUUID(),
       sourceId: source && source.sourceId ? source.sourceId : getCurrentPlaylistPageSourceId(),
       startedAt: now,
       deadlineAt: now + SYNC_MAX_DURATION_MS,
@@ -255,6 +254,9 @@
     if (!activePlaylistSync || activePlaylistSync.cancelled) return false;
     activePlaylistSync.cancelled = true;
     activePlaylistSync.cancelMessage = message;
+    activePlaylistSync.controller.abort();
+    const context = activePlaylistSync;
+    Promise.resolve().then(() => chrome.runtime.sendMessage({ action: 'fetchYoutubePlaylist', operation: 'stop', playlistId: context.sourceId, runId: context.requestId })).catch(() => {});
     return true;
   }
 
@@ -264,7 +266,7 @@
     }
 
     if (context.cancelled) {
-      throw createSyncStopError(context.cancelMessage || 'Sync stopped.', { shouldFailRun: false });
+      throw createSyncStopError(context.cancelMessage || 'Sync stopped.');
     }
 
     const currentSourceId = getCurrentPlaylistPageSourceId();
@@ -282,85 +284,12 @@
     }
 
     if (now - context.lastProgressAt > SYNC_IDLE_TIMEOUT_MS) {
-      throw createSyncStopError('Sync timed out while waiting for YouTube to load more videos.');
+      throw createSyncStopError('Sync timed out while waiting for a response.');
     }
   }
 
   function markSyncProgress(context) {
     if (context) context.lastProgressAt = Date.now();
-  }
-
-  function getPlaylistShortfall(expectedCount, seenCount) {
-    const expected = Number(expectedCount);
-    const seen = Number(seenCount);
-    if (!Number.isFinite(expected) || !Number.isFinite(seen)) return 0;
-    return Math.max(0, expected - seen);
-  }
-
-  function formatShortfallWarning(expectedCount, seenCount, shortfallCount, confirmedFullLoad) {
-    const action = confirmedFullLoad
-      ? 'You confirmed all videos loaded; missing DB check ran.'
-      : 'Missing DB check was skipped because full load was not confirmed.';
-    return ` YouTube lists ${expectedCount}, but only ${seenCount} video IDs loaded; ${shortfallCount} did not load. ${action}`;
-  }
-
-  async function confirmPlaylistFullyLoaded(expectedCount, seenCount, shortfallCount, syncContext = null) {
-    markSyncProgress(syncContext);
-
-    return new Promise(resolve => {
-      document.getElementById('ytb-sync-load-confirm')?.remove();
-
-      const overlay = document.createElement('div');
-      overlay.id = 'ytb-sync-load-confirm';
-      overlay.className = 'yt-sync-cleanup-modal yt-sync-load-confirm-modal';
-
-      const dialog = document.createElement('div');
-      dialog.className = 'yt-sync-cleanup-dialog';
-
-      const title = document.createElement('div');
-      title.className = 'yt-sync-cleanup-title';
-      title.textContent = 'Confirm playlist load?';
-
-      const text = document.createElement('div');
-      text.className = 'yt-sync-cleanup-text';
-      text.textContent = `YouTube says this playlist has ${expectedCount} videos, but sync loaded ${seenCount}. If the page reached the bottom and no more videos load, confirm to mark ${shortfallCount} missing DB entries as removed or unavailable.`;
-
-      const actions = document.createElement('div');
-      actions.className = 'yt-sync-cleanup-actions';
-
-      const noBtn = document.createElement('button');
-      noBtn.type = 'button';
-      noBtn.dataset.choice = 'no';
-      noBtn.textContent = 'No, skip missing check';
-
-      const yesBtn = document.createElement('button');
-      yesBtn.type = 'button';
-      yesBtn.dataset.choice = 'yes';
-      yesBtn.textContent = 'Yes, all loaded';
-
-      actions.appendChild(noBtn);
-      actions.appendChild(yesBtn);
-      dialog.appendChild(title);
-      dialog.appendChild(text);
-      dialog.appendChild(actions);
-      overlay.appendChild(dialog);
-
-      const finish = value => {
-        overlay.remove();
-        markSyncProgress(syncContext);
-        resolve(value);
-      };
-
-      overlay.addEventListener('click', event => {
-        if (event.target === overlay) finish(false);
-        const button = event.target.closest && event.target.closest('button[data-choice]');
-        if (!button) return;
-        finish(button.dataset.choice === 'yes');
-      });
-
-      document.body.appendChild(overlay);
-      yesBtn.focus();
-    });
   }
 
   async function withSyncTimeout(promise, ms, label, syncContext) {
@@ -381,50 +310,6 @@
     }
   }
 
-  function scrollDownForSync(syncContext = null) {
-    if (syncContext) assertSyncCanContinue(syncContext);
-    const metrics = getScrollMetrics();
-    const step = Math.max(900, Math.floor(window.innerHeight * 1.25));
-    scrollToPosition(Math.min(metrics.scrollTop + step, metrics.scrollHeight));
-  }
-
-  function holdAtBottomForSync(syncContext = null) {
-    if (syncContext) assertSyncCanContinue(syncContext);
-    scrollToPosition(getScrollMetrics().scrollHeight);
-  }
-
-  async function findRemoveMenuItem() {
-    for (let i = 0; i < 20; i++) {
-      const item = getVisibleMenuItems().find(candidate => isRemoveMenuText(candidate.textContent));
-      if (item) return item.closest('ytd-menu-service-item-renderer, ytd-menu-navigation-item-renderer, tp-yt-paper-item') || item;
-      await delay(100);
-    }
-    return null;
-  }
-
-  async function removeYoutubePlaylistEntry(entry) {
-    entry.node.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-    entry.node.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-    await delay(80);
-
-    const menuButton = getVisibleMenuButton(entry.node);
-    if (!menuButton) return { success: false, error: 'Menu button not found' };
-
-    entry.node.scrollIntoView({ block: 'center' });
-    await delay(150);
-    menuButton.click();
-
-    const removeItem = await findRemoveMenuItem();
-    if (!removeItem) {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      return { success: false, error: 'Remove menu item not found' };
-    }
-
-    removeItem.click();
-    await delay(700);
-    return { success: true };
-  }
-
   async function cleanupRemovedYoutubeEntries(entries, cleanup, syncContext = null) {
     const removedIds = new Set();
     if (!cleanup || !cleanup.enabled) return removedIds;
@@ -440,7 +325,15 @@
         key: SYNC_CLEANUP_STATUS_KEY
       });
 
-      const result = await removeYoutubePlaylistEntry(entry);
+      const result = await withSyncTimeout(
+        chrome.runtime.sendMessage({
+          action: 'fetchYoutubePlaylist', operation: 'remove', playlistId: syncContext.sourceId,
+          runId: syncContext.requestId, setVideoId: entry.setVideoId
+        }),
+        25000,
+        'Removing YouTube playlist entry',
+        syncContext
+      );
       markSyncProgress(syncContext);
       if (result.success) {
         cleanup.removed++;
@@ -500,53 +393,8 @@
     return pending.length;
   }
 
-  async function collectAndSendSyncVideos(runId, seenIds, cleanup = null, syncContext = null) {
-    if (syncContext) assertSyncCanContinue(syncContext);
-    const entries = collectLoadedPlaylistEntries();
-    const cleanupAttemptedBefore = cleanup && cleanup.enabled ? cleanup.attempted.size : 0;
-    const removedIds = await cleanupRemovedYoutubeEntries(entries, cleanup, syncContext);
-    const excludeIds = cleanup && cleanup.enabled ? cleanup.ids : removedIds;
-    const syncEntries = excludeIds.size > 0
-      ? entries.filter(entry => !excludeIds.has(entry.video.id))
-      : entries;
-    const added = await sendSyncVideos(runId, syncEntries.map(entry => entry.video), seenIds, syncContext);
-    const cleaned = cleanup && cleanup.enabled ? cleanup.attempted.size - cleanupAttemptedBefore : removedIds.size;
-    return { added, cleaned };
-  }
-
-  async function waitForPlaylistProgress(runId, seenIds, previousHeight, timeoutMs, cleanup = null, syncContext = null) {
-    const deadline = Date.now() + timeoutMs;
-    let addedTotal = 0;
-    let cleanedTotal = 0;
-    let heightChanged = false;
-
-    while (Date.now() < deadline) {
-      if (syncContext) assertSyncCanContinue(syncContext);
-      await delay(500);
-
-      const progress = await collectAndSendSyncVideos(runId, seenIds, cleanup, syncContext);
-      addedTotal += progress.added;
-      cleanedTotal += progress.cleaned;
-
-      const metrics = getScrollMetrics();
-      if (metrics.scrollHeight > previousHeight + 24) {
-        heightChanged = true;
-      }
-
-      if (progress.added > 0 || progress.cleaned > 0 || heightChanged) {
-        return { added: addedTotal, cleaned: cleanedTotal, heightChanged };
-      }
-
-      if (metrics.nearBottom) holdAtBottomForSync(syncContext);
-      else scrollDownForSync(syncContext);
-    }
-
-    return { added: addedTotal, cleaned: cleanedTotal, heightChanged };
-  }
-
-
   async function performPlaylistSync({ playlistId, source, cleanupYoutube, panel }) {
-    if (activePlaylistSync && !activePlaylistSync.cancelled) {
+    if (activePlaylistSync) {
       return { success: false, error: 'Sync is already running.' };
     }
 
@@ -591,88 +439,34 @@
           }
         : null;
 
-      const expectedCount = getExpectedPlaylistVideoCount();
-      let idleBottomRounds = 0;
-      let hardIdleRounds = 0;
-      let shortfallWarning = '';
-      let shortfallCount = 0;
-      let shortfallExpectedCount = 0;
-
-      for (let round = 0; round < 1600; round++) {
-        assertSyncCanContinue(syncContext);
-        const progressNow = await collectAndSendSyncVideos(run.id, seenIds, cleanup, syncContext);
-        const metrics = getScrollMetrics();
-        const expectedSuffix = expectedCount ? ` / ${expectedCount}` : '';
-        panel.setSyncStatus(`Synced ${seenIds.size}${expectedSuffix} videos. Loading more...`, 'busy', {
-          key: SYNC_PROGRESS_STATUS_KEY
-        });
-
-        if (metrics.nearBottom) holdAtBottomForSync(syncContext);
-        else scrollDownForSync(syncContext);
-
-        const progress = await waitForPlaylistProgress(run.id, seenIds, metrics.scrollHeight, 3000, cleanup, syncContext);
-        const madeProgress = progressNow.added > 0 ||
-          progressNow.cleaned > 0 ||
-          progress.added > 0 ||
-          progress.cleaned > 0 ||
-          progress.heightChanged;
-
-        if (madeProgress) {
-          idleBottomRounds = 0;
-          hardIdleRounds = 0;
-          syncContext.lastProgressAt = Date.now();
-          continue;
-        }
-
-        hardIdleRounds++;
-        if (getScrollMetrics().nearBottom) idleBottomRounds++;
-        else idleBottomRounds = 0;
-
-        if (expectedCount && seenIds.size < expectedCount) {
-          panel.setSyncStatus(`Synced ${seenIds.size} / ${expectedCount}. Waiting for YouTube to load more...`, 'busy', {
-            key: SYNC_PROGRESS_STATUS_KEY
-          });
-          if (hardIdleRounds >= SYNC_MISMATCH_IDLE_ROUNDS && getScrollMetrics().nearBottom) {
-            shortfallExpectedCount = expectedCount;
-            shortfallCount = getPlaylistShortfall(expectedCount, seenIds.size);
-            break;
+      const cleanupEntries = [];
+      const snapshot = await playlistSync.start({
+        playlistId: source.sourceId,
+        runId: syncContext.requestId,
+        signal: syncContext.controller.signal,
+        onRequest: ({ page, attempt, expected, received }) => {
+          assertSyncCanContinue(syncContext);
+          const total = expected == null ? '' : ' / ' + expected;
+          panel.setSyncStatus('Loaded ' + received + total + ' videos. ' + (attempt ? 'Retrying' : 'Requesting') + ' YouTube page ' + page + '...', 'busy', { key: SYNC_PROGRESS_STATUS_KEY });
+        },
+        onPage: async ({ entries }) => {
+          assertSyncCanContinue(syncContext);
+          markSyncProgress(syncContext);
+          const videos = [];
+          for (const entry of entries) {
+            if (cleanup?.ids.has(entry.video.id)) cleanupEntries.push(entry);
+            else videos.push(entry.video);
           }
-          continue;
+          await sendSyncVideos(run.id, videos, seenIds, syncContext);
         }
-
-        if (idleBottomRounds >= 10) break;
-      }
-
+      });
       assertSyncCanContinue(syncContext);
-      await collectAndSendSyncVideos(run.id, seenIds, cleanup, syncContext);
-
-      if (seenIds.size === 0) {
-        throw createSyncStopError('Sync stopped because no videos were loaded from YouTube. Reload the playlist page and try again.');
-      }
-
-      const finalExpectedCount = getExpectedPlaylistVideoCount();
-      shortfallExpectedCount = finalExpectedCount || shortfallExpectedCount;
-      if (shortfallExpectedCount) {
-        shortfallCount = getPlaylistShortfall(shortfallExpectedCount, seenIds.size);
-      }
-
-      let skipMissingCheck = false;
-      if (shortfallCount > 0) {
-        panel.setSyncStatus(`Loaded ${seenIds.size} / ${shortfallExpectedCount}. Waiting for confirmation...`, 'busy');
-        const confirmedFullLoad = await confirmPlaylistFullyLoaded(
-          shortfallExpectedCount,
-          seenIds.size,
-          shortfallCount,
-          syncContext
-        );
-        skipMissingCheck = !confirmedFullLoad;
-        shortfallWarning = formatShortfallWarning(
-          shortfallExpectedCount,
-          seenIds.size,
-          shortfallCount,
-          confirmedFullLoad
-        );
-      }
+      const skipMissingCheck = snapshot.skipped > 0;
+      let shortfallWarning = snapshot.expected != null && snapshot.expected !== snapshot.received
+        ? ' YouTube lists ' + snapshot.expected + ', but returned ' + snapshot.received + ' video entries. All available pages were loaded.'
+        : '';
+      if (skipMissingCheck) shortfallWarning += ' YouTube omitted ' + snapshot.skipped + ' video IDs; the missing DB check was skipped.';
+      await cleanupRemovedYoutubeEntries(cleanupEntries, cleanup, syncContext);
 
       assertSyncCanContinue(syncContext);
       panel.setSyncStatus(skipMissingCheck ? 'Finishing sync without missing check...' : 'Checking missing videos from DB...', 'busy');
@@ -730,11 +524,12 @@
       }
       return { success: true, message: doneMessage, state: 'success' };
     } catch (err) {
-      const message = err.message || 'Sync failed.';
-      if (run && run.id && (!err.isSyncStop || err.shouldFailRun !== false)) {
+      const stopped = err.isSyncStop || err.name === 'AbortError';
+      const message = stopped && syncContext.cancelMessage ? syncContext.cancelMessage : err.message || 'Sync failed.';
+      if (run && run.id) {
         window.api.failSync(run.id, message).catch(() => {});
       }
-      if (err.isSyncStop) {
+      if (stopped) {
         panel.setSyncStatus(message, 'success');
         return { success: true, message, state: 'success', stopped: true };
       }
@@ -743,6 +538,7 @@
       console.error('Playlist sync failed:', err);
       return { success: false, error: message };
     } finally {
+      syncContext.controller.abort();
       if (activePlaylistSync === syncContext) activePlaylistSync = null;
       safeStorageSet({ activeSyncTabId: null });
     }

@@ -1,4 +1,4 @@
-importScripts('comments-page.js');
+importScripts('comments-page.js', 'playlist-page.js');
 
 try {
   importScripts('config.local.js');
@@ -732,11 +732,40 @@ async function fetchCommentsForTab(request, sender) {
   return result;
 }
 
+async function fetchPlaylistForTab(request, sender) {
+  if (!isYoutubeTab(sender.tab) || sender.frameId !== 0 || !/^[a-zA-Z0-9_-]{1,150}$/.test(request.playlistId || '')) {
+    throw new Error('Playlist sync must run on the current YouTube playlist page.');
+  }
+  if (!['page', 'remove', 'stop'].includes(request.operation) || typeof request.runId !== 'string' || !request.runId || request.runId.length > 100) {
+    throw new Error('Invalid playlist sync request.');
+  }
+  if (request.continuation != null && (typeof request.continuation !== 'string' || !request.continuation || request.continuation.length > 50000)) {
+    throw new Error('Invalid playlist continuation.');
+  }
+  if (request.operation === 'remove' && (typeof request.setVideoId !== 'string' || !/^[a-zA-Z0-9_-]{1,200}$/.test(request.setVideoId))) {
+    throw new Error('Invalid YouTube playlist entry ID.');
+  }
+  const target = sender.documentId
+    ? { tabId: sender.tab.id, documentIds: [sender.documentId] }
+    : { tabId: sender.tab.id, frameIds: [0] };
+  const results = await chrome.scripting.executeScript({
+    target,
+    world: 'MAIN',
+    func: fetchYoutubePlaylistPage,
+    args: [{ operation: request.operation, playlistId: request.playlistId, runId: request.runId, continuation: request.continuation, setVideoId: request.setVideoId }]
+  });
+  const result = results[0]?.result;
+  if (!result) throw new Error('YouTube did not respond to playlist sync. Reload this tab and try again.');
+  return result;
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   let task = null;
 
   if (request.action === 'fetchYoutubeComments') {
     task = fetchCommentsForTab(request, sender);
+  } else if (request.action === 'fetchYoutubePlaylist') {
+    task = fetchPlaylistForTab(request, sender);
   } else if (request.action === 'openManagementPage') {
     task = openManagementPage();
   } else if (request.action === 'activateFloatingPanel') {

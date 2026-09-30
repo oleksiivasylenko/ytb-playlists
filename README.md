@@ -10,7 +10,7 @@ The goal is simple: make it easy to review, filter, summarize, move, restore, an
 
 - Stores personal playlists locally without depending on a YouTube account.
 - Adds videos from the active YouTube page through the popup or docked panel.
-- Syncs real YouTube playlists into local lists from the playlist page.
+- Syncs real YouTube playlists through authenticated YouTube requests without scrolling. Sync finishes as soon as the last continuation ends, even when YouTube hides unavailable videos and its displayed total differs. Failed or interrupted requests never finalize a partial snapshot.
 - Tracks videos removed from the source playlist, unavailable on YouTube, quietly deleted by YouTube, moved, skipped, watched, or manually removed.
 - Provides a compact YouTube overlay panel with search, sorting, author grouping, and status filters.
 - Supports automatic cleanup for fully watched or skipped videos.
@@ -56,6 +56,8 @@ ytb-playlists/
     content-dom.js            Read-only DOM adapters for YouTube pages (playlist, watch, comments)
     comments-page.js          YouTube comment requests and response parsing in the page context
     comments-sync.js          Cancellable comment pagination and per-video in-memory snapshot
+    playlist-page.js          Authenticated YouTube playlist requests, parsing, and optional cleanup
+    playlist-sync.js          Cancellable playlist pagination with explicit completion
     content.js                Content-script behaviour: sync, quick save, watch controls, ask panel
     panel-template.js         HTML template of the docked/floating panel
     panel-utils.js            Pure helpers: formatting, video status, tags

@@ -506,6 +506,13 @@
 
     if (isSameSyncStatus(currentStatus, status) || isSameSyncStatus(queuedStatus, status)) return;
 
+    if (status.key.startsWith('playlist-sync-') || status.state === 'success' || status.state === 'error') {
+      syncStatusQueue = [];
+      clearSyncStatusTimer();
+      applySyncStatus(status);
+      return;
+    }
+
     if (!status.text && !status.state) {
       syncStatusQueue = [];
       clearSyncStatusTimer();
