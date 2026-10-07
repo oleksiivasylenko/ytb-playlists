@@ -4,6 +4,7 @@ import syncRouter from './sync';
 import videosRouter from './videos';
 import summariesRouter from './summaries';
 import transcriptsRouter from './transcripts';
+import channelCacheRouter from './channel-cache';
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use(syncRouter);
 router.use(summariesRouter);
 router.use(transcriptsRouter);
 router.use(videosRouter);
+router.use(channelCacheRouter);
 
 export default router;
