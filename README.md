@@ -18,7 +18,7 @@ The goal is simple: make it easy to review, filter, summarize, move, restore, an
 - Includes a dedicated manager for creating, renaming, deleting, and linking playlists to YouTube source URLs.
 - Fetches YouTube metadata: title, author, thumbnail, duration, views, and availability.
 - Downloads transcripts through the paid FetchTranscript API. This is not an ad; it just fit this project perfectly. For my usage, it looks like about $5 should be enough for a year.
-- Generates text/HTML summaries and tags through the paid OpenRouter API. The actual cost depends on the model you choose and how actively you generate summaries or tags. I currently recommend `google/gemini-2.5-flash`, which is what I use for both text and HTML summaries.
+- Generates text/HTML summaries and tags through the paid OpenRouter API. The actual cost depends on the model you choose and how actively you generate summaries or tags. The default model for new installations is `openai/gpt-6-luna-pro` for text summaries, HTML summaries, and Ask.
 - Exposes settings for models, summary language, prompts, transcript language priority, and preferred tags.
 - Downloads available comments and replies with `Sync comments` in the Ask panel, without scrolling the page or loading recommendations. The counter and spinner show progress; click again to stop, then click to resume. Downloaded text stays available to Ask until you leave or reload the video. Sync uses YouTube's newest-first feed and finishes when its continuations end, even if YouTube's displayed total differs from the available comments.
 

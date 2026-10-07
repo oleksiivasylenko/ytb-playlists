@@ -243,10 +243,10 @@ export function initDb() {
     INSERT OR IGNORE INTO summary_settings (id, model, language, prompt, html_model, html_prompt, transcript_languages)
     VALUES (1, ?, ?, ?, ?, ?, ?)
   `).run(
-    'google/gemini-2.5-flash',
+    'openai/gpt-6-luna-pro',
     'Ukrainian',
     defaultPlainSummaryPrompt,
-    'google/gemini-2.5-flash',
+    'openai/gpt-6-luna-pro',
     defaultHtmlSummaryPrompt,
     'en,uk,ru'
   );
