@@ -75,13 +75,28 @@ function createProxyResponse(payload) {
   };
 }
 
+function sendAbortableApiMessage(message, signal) {
+  if (signal.aborted) return Promise.reject(new DOMException('Request cancelled.', 'AbortError'));
+  const requestId = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const cancel = () => {
+      sendRuntimeMessage({ action: 'abortApiFetch', requestId }).catch(() => {});
+      reject(new DOMException('Request cancelled.', 'AbortError'));
+    };
+    signal.addEventListener('abort', cancel, { once: true });
+    sendRuntimeMessage({ ...message, requestId }).then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', cancel);
+    });
+  });
+}
+
 async function apiFetch(url, options = {}) {
   if (!shouldProxyApiFetch()) {
     const fallbackUrl = url.startsWith('/api') ? `http://localhost:3001${url}` : url;
     return nativeFetch(fallbackUrl, options);
   }
 
-  const response = await sendRuntimeMessage({
+  const message = {
     action: 'apiFetch',
     url,
     options: {
@@ -89,7 +104,10 @@ async function apiFetch(url, options = {}) {
       headers: options.headers || {},
       body: options.body
     }
-  });
+  };
+  const response = options.signal
+    ? await sendAbortableApiMessage(message, options.signal)
+    : await sendRuntimeMessage(message);
 
   return createProxyResponse(response);
 }
@@ -524,6 +542,17 @@ const api = {
     const res = await apiFetch(`${API_BASE}/videos/${videoId}/ask-history`);
     const data = await readJsonResponse(res, 'Failed to load saved conversation');
     if (!res.ok) throw new Error(data.error || 'Failed to load saved conversation');
+    return data;
+  },
+  async transcribeAudio(audio, mimeType, options = {}) {
+    const res = await apiFetch(`${API_BASE}/dictation/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio, mimeType }),
+      signal: options.signal
+    });
+    const data = await readJsonResponse(res, 'Audio transcription failed.');
+    if (!res.ok) throw new Error(data.error || 'Audio transcription failed.');
     return data;
   },
   async startSync(payload) {

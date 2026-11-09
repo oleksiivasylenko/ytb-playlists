@@ -279,24 +279,44 @@ function getPlaylistListIdFromUrl(url) {
   }
 }
 
-async function proxyApiFetch(request) {
+const activeApiRequests = new Map();
+
+function apiRequestKey(request, sender) {
+  if (typeof request.requestId !== 'string' || request.requestId.length > 64) return null;
+  return `${sender.tab?.id ?? 'extension'}:${sender.documentId || sender.frameId || 0}:${request.requestId}`;
+}
+
+function abortApiFetch(request, sender) {
+  const key = apiRequestKey(request, sender);
+  if (key) activeApiRequests.get(key)?.abort();
+  return { success: true };
+}
+
+async function proxyApiFetch(request, sender) {
   const options = request.options && typeof request.options === 'object' ? request.options : {};
-  const apiRequest = createApiRequest(request.url, options);
-  const response = await fetch(apiRequest.url, apiRequest.options);
+  const key = apiRequestKey(request, sender);
+  const controller = key ? new AbortController() : null;
+  if (key) activeApiRequests.set(key, controller);
 
-  const headers = {};
-  response.headers.forEach((value, key) => {
-    headers[key.toLowerCase()] = value;
-  });
+  try {
+    const apiRequest = createApiRequest(request.url, { ...options, signal: controller?.signal });
+    const response = await fetch(apiRequest.url, apiRequest.options);
+    const headers = {};
+    response.headers.forEach((value, key) => {
+      headers[key.toLowerCase()] = value;
+    });
 
-  return {
-    success: true,
-    ok: response.ok,
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-    body: await response.text()
-  };
+    return {
+      success: true,
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+      body: await response.text()
+    };
+  } finally {
+    if (key) activeApiRequests.delete(key);
+  }
 }
 
 function postPortMessage(port, message) {
@@ -799,7 +819,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === 'getPublicSummaryUrl') {
     task = Promise.resolve({ success: true, url: getPublicSummaryUrl(request.videoId, request.mode) });
   } else if (request.action === 'apiFetch') {
-    task = proxyApiFetch(request);
+    task = proxyApiFetch(request, sender);
+  } else if (request.action === 'abortApiFetch') {
+    task = Promise.resolve(abortApiFetch(request, sender));
   } else if (request.action === 'getApiHost') {
     task = Promise.resolve(getApiHost());
   }

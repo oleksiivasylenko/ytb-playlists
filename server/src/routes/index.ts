@@ -5,6 +5,7 @@ import videosRouter from './videos';
 import summariesRouter from './summaries';
 import transcriptsRouter from './transcripts';
 import channelCacheRouter from './channel-cache';
+import dictationRouter from './dictation';
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use(summariesRouter);
 router.use(transcriptsRouter);
 router.use(videosRouter);
 router.use(channelCacheRouter);
+router.use(dictationRouter);
 
 export default router;

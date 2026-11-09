@@ -21,6 +21,7 @@ The goal is simple: make it easy to review, filter, summarize, move, restore, an
 - Generates text/HTML summaries and tags through the paid OpenRouter API. The actual cost depends on the model you choose and how actively you generate summaries or tags. The default model for new installations is `openai/gpt-6-luna-pro` for text summaries, HTML summaries, and Ask.
 - Exposes settings for models, summary language, prompts, transcript language priority, and preferred tags.
 - Downloads available comments and replies with `Sync comments` in the Ask panel, without scrolling the page or loading recommendations. The counter and spinner show progress; click again to stop, then click to resume. Downloaded text stays available to Ask until you leave or reload the video. Sync uses YouTube's newest-first feed and finishes when its continuations end, even if YouTube's displayed total differs from the available comments.
+- Dictates Ask questions with a microphone button, a live audio waveform, and separate cancel, transcribe, and transcribe-and-send controls. Audio is transcribed on the server using GPT Transcribe through OpenRouter.
 
 ## How It Works
 
@@ -56,6 +57,7 @@ ytb-playlists/
     content-dom.js            Read-only DOM adapters for YouTube pages (playlist, watch, comments)
     comments-page.js          YouTube comment requests and response parsing in the page context
     comments-sync.js          Cancellable comment pagination and per-video in-memory snapshot
+    ask-dictation.js          Microphone recording, waveform, transcription and draft insertion
     playlist-page.js          Authenticated YouTube playlist requests, parsing, and optional cleanup
     playlist-sync.js          Cancellable playlist pagination with explicit completion
     content.js                Content-script behaviour: sync, quick save, watch controls, ask panel
@@ -111,6 +113,7 @@ The server listens on port `3001` by default. Private `/api` routes require the 
    FETCHTRANSCRIPT_API_KEY=yt_your_api_key
    FETCHTRANSCRIPT_LANGUAGES=en,uk,ru
    OPENROUTER_API_KEY=sk-or-v1-your_openrouter_key
+   OPENROUTER_TRANSCRIBE_MODEL=openai/gpt-transcribe
    ```
 
 5. Start the development server:
@@ -146,6 +149,20 @@ The Compose configuration stores SQLite data in a named volume and publishes the
 7. Open YouTube and use the popup, docked panel, or manager.
 
 For a remote server, set `apiBaseUrl` to an HTTPS URL ending in `/api`, for example `https://playlists.example.com/api`. `publicBaseUrl` defaults to `${apiBaseUrl}/public`; set it explicitly only when public pages use another base path. Summary pages then open at public HTTPS URLs such as `https://playlists.example.com/api/public/summaries/VIDEO_ID?mode=html`. Reload the extension after changing `config.local.js`.
+
+### Ask dictation
+
+Open Ask on a YouTube video and click the microphone. Allow microphone access for YouTube when the browser asks. The waveform reflects microphone input while recording.
+
+- Stop ends recording and inserts the transcript at the cursor, replacing selected text. Review the draft and click `Ask about` to submit it.
+- The upward arrow transcribes the recording and submits the resulting question immediately using the selected Ask context.
+- Cancel or Escape discards the recording and preserves the draft. Closing the Ask panel or changing videos also cancels dictation and any pending transcription.
+
+Recordings stop for review after five minutes and cannot exceed 6 MB. Questions longer than 4,000 characters remain editable and require shortening before submission. Permission and transcription failures preserve the existing draft.
+
+The authenticated `POST /api/dictation/transcribe` route accepts JSON with base64 `audio` and its `mimeType`, then forwards it to OpenRouter's `/audio/transcriptions` endpoint. `OPENROUTER_TRANSCRIBE_MODEL` defaults to `openai/gpt-transcribe`. The existing server-side `OPENROUTER_API_KEY` is used; audio is processed in memory and is not written to files or SQLite by this application. Upstream transcription requests time out after 65 seconds and are aborted if the caller disconnects. No summary, tag, or Ask answer model is changed by this setting.
+
+Run server regression checks with `npm run test:dictation` inside `server`. Browser interaction checks use `node --test extension/tests/ask-dictation.test.js` with Playwright available; `PLAYWRIGHT_MODULE` can point to an installed Playwright module. Optional `DICTATION_TEST_WAV` supplies synthetic microphone audio, and `DICTATION_ARTIFACT_DIR` saves test screenshots and that synthetic recording.
 
 ## Typical Workflow
 

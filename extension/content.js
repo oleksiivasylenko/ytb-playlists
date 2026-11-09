@@ -7,6 +7,7 @@
   document.getElementById('yt-qs-wrapper')?.remove();
   document.getElementById('yt-qs-dropdown')?.remove();
   document.getElementById('ytb-actions-wrapper')?.remove();
+  document.getElementById('ytb-ask-panel')?.dictation?.destroy();
   document.getElementById('ytb-ask-panel')?.remove();
 
   let extensionContextAlive = true;
@@ -121,6 +122,7 @@
     document.getElementById('yt-qs-wrapper')?.remove();
     document.getElementById('yt-qs-dropdown')?.remove();
     document.getElementById('ytb-actions-wrapper')?.remove();
+    document.getElementById('ytb-ask-panel')?.dictation?.destroy();
     document.getElementById('ytb-ask-panel')?.remove();
   }
 
@@ -972,6 +974,7 @@
   }
 
   async function handleAskAboutClick(panel) {
+    if (!panel || panel.dataset.askBusy === '1' || (panel.dataset.dictationState && panel.dataset.dictationState !== 'idle')) return;
     const videoId = getVideoIdFromUrl();
     const textarea = panel && panel.querySelector('.ytb-ask-textarea');
     const askButton = panel && panel.querySelector('.ytb-ask-submit-btn');
@@ -982,8 +985,15 @@
       return;
     }
 
+    if (question.length > 4000) {
+      setAskStatus(panel, 'Shorten the question to 4,000 characters before sending.', 'error');
+      return;
+    }
+
     textarea.value = '';
+    panel.dataset.askBusy = '1';
     askButton.disabled = true;
+    panel.dictation?.refresh();
     let historyEntry = null;
 
     try {
@@ -1021,7 +1031,9 @@
       setAskStatus(panel, error.message || 'Ask failed.', 'error');
       logContentError('Ask panel: ask failed', error);
     } finally {
+      delete panel.dataset.askBusy;
       askButton.disabled = false;
+      panel.dictation?.refresh();
       updateAskCommentStats(panel);
     }
   }
@@ -1117,6 +1129,16 @@
     panel.appendChild(status);
     panel.appendChild(history);
 
+    const videoId = getVideoIdFromUrl();
+    panel.dictation = window.ytbAskDictation.create({
+      panel,
+      textarea,
+      controls,
+      onSubmit: () => handleAskAboutClick(panel),
+      onStatus: (text, state) => setAskStatus(panel, text, state),
+      isCurrent: () => getVideoIdFromUrl() === videoId
+    });
+
     panel.dataset.askMode = 'comments';
     panel.dataset.askTranscriptReady = '0';
     panel.dataset.askHistoryLoaded = '0';
@@ -1157,6 +1179,7 @@
       loadAskHistory(panel);
       panel.querySelector('.ytb-ask-textarea')?.focus();
     } else {
+      panel.dictation?.cancel();
       stopActiveCommentsSync('Comment sync stopped.', { silent: true });
     }
   }
@@ -1945,6 +1968,7 @@
       document.getElementById('yt-qs-dropdown')?.remove();
       const existingActions = document.getElementById('ytb-actions-wrapper');
       if (existingActions) existingActions.remove();
+      document.getElementById('ytb-ask-panel')?.dictation?.destroy();
       document.getElementById('ytb-ask-panel')?.remove();
       stopActiveCommentsSync('Comment sync stopped because this tab opened a different video.', { silent: true });
       commentsSync.clear();

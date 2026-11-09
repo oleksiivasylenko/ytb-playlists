@@ -40,6 +40,15 @@ const apiErrorHandler: ErrorRequestHandler = (error, req, res, next) => {
     return;
   }
 
+  if (error.type === 'entity.too.large') {
+    res.status(413).json({ error: 'Request is too large.' });
+    return;
+  }
+  if (error.type === 'entity.parse.failed') {
+    res.status(400).json({ error: 'Invalid JSON request.' });
+    return;
+  }
+
   console.error(`${req.method} ${req.originalUrl} failed:`, error);
 
   if (error instanceof ZodError) {

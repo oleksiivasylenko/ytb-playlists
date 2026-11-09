@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube Playlist Alternative",
-  "version": "1.0",
+  "version": "1.2.0",
   "description": "Local YouTube playlist manager with sync, filters, cleanup, transcripts, summaries, and a docked panel.",
   "icons": {
     "16": "icons/icon-16.png",
@@ -38,6 +38,7 @@
         "content-dom.js",
         "comments-sync.js",
         "playlist-sync.js",
+        "ask-dictation.js",
         "content.js"
       ]
     }
